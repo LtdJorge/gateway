@@ -2,23 +2,22 @@
  * Wepback configuration for the node server.
  */
 
-const path = require('path');
-const fs = require('fs');
-
-const webpack = require('webpack');
-const CopyWebpackPlugin = require('copy-webpack-plugin');
 const {CheckerPlugin} = require('awesome-typescript-loader');
-const MiniCssExtractPlugin = require('mini-css-extract-plugin');
-const UglifyJsPlugin = require('uglifyjs-webpack-plugin');
+const {CleanWebpackPlugin} = require('clean-webpack-plugin');
+const CopyWebpackPlugin = require('copy-webpack-plugin');
+const ExtractTextPlugin = require('extract-text-webpack-plugin');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
-const CleanWebpackPlugin = require('clean-webpack-plugin');
+const ImageminPlugin = require('imagemin-webpack');
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const fs = require('fs');
+const path = require('path');
+const {v1: uuidv1} = require('uuid');
+const webpack = require('webpack');
 
 const externals = {};
 fs.readdirSync('node_modules')
-  .filter(function(x) {
-    return ['.bin'].indexOf(x) === -1;
-  })
-  .forEach(function(mod) {
+  .filter((x) => !['.bin'].includes(x))
+  .forEach((mod) => {
     externals[mod] = `commonjs ${mod}`;
   });
 
@@ -35,7 +34,7 @@ const webpackNode = {
   mode: 'development',
   target: 'node',
   node: {
-    __dirname: false,
+    __dirname: true,
     __filename: false,
   },
   resolve: {
@@ -49,7 +48,10 @@ const webpackNode = {
     rules: [
       {
         test: /\.tsx?$/,
-        loader: 'awesome-typescript-loader',
+        include: path.resolve(__dirname, 'src'),
+        use: [
+          'awesome-typescript-loader',
+        ],
       },
     ],
   },
@@ -59,33 +61,64 @@ const webpackNode = {
 };
 
 const pluginsWeb = [
+  new CleanWebpackPlugin({
+    cleanOnceBeforeBuildPatterns: ['**/*', '!service-worker.js*'],
+  }),
   new CopyWebpackPlugin([
     {
       from: 'static/**/*',
-      to: path.join(__dirname, 'build/'),
+      to: path.join(__dirname, 'build'),
       ignore: ['*.js', '*/index.html'],
     },
     {
-      from: 'static/js/lib/*',
-      to: path.join(__dirname, 'build/'),
+      from: 'src/views/connecting.handlebars',
+      to: path.join(__dirname, 'build', 'views'),
     },
     {
-      from: 'static/service-worker.js',
-      to: path.join(__dirname, 'build/static'),
+      from: 'src/views/creating.handlebars',
+      to: path.join(__dirname, 'build', 'views'),
+    },
+    {
+      from: 'src/views/hotspot.handlebars',
+      to: path.join(__dirname, 'build', 'views'),
+    },
+    {
+      from: 'src/views/router-setup.handlebars',
+      to: path.join(__dirname, 'build', 'views'),
+    },
+    {
+      from: 'src/views/wifi-setup.handlebars',
+      to: path.join(__dirname, 'build', 'views'),
     },
   ]),
-  new UglifyJsPlugin({
-    test: /\.js$/,
-    sourceMap: true,
+  new ImageminPlugin({
+    test: /\.(jpe?g|png|gif|svg)$/i,
+    name: '[path][name].[ext]',
+    imageminOptions: {
+      plugins: [
+        'gifsicle',
+        'jpegtran',
+        'optipng',
+        'svgo',
+      ],
+    },
+  }),
+  new webpack.SourceMapDevToolPlugin({
+    test: /\.css$/,
+    filename: '[file].map',
   }),
   new MiniCssExtractPlugin({
     filename: 'bundle/[hash]-[name].css',
   }),
-  new CleanWebpackPlugin(['build/static/bundle']),
   new HtmlWebpackPlugin({
     inject: 'head',
     template: 'static/index.html',
-    chunks: ['style', 'check-user.js', 'app.js'],
+    chunks: ['style', 'app.js'],
+  }),
+  new HtmlWebpackPlugin({
+    template: 'src/views/connecting.handlebars',
+    filename: '../views/connecting.handlebars',
+    chunks: ['connecting.js'],
   }),
   new HtmlWebpackPlugin({
     template: 'static/signup/index.html',
@@ -93,37 +126,58 @@ const pluginsWeb = [
     chunks: ['create-user.js'],
   }),
   new HtmlWebpackPlugin({
+    template: 'src/views/creating.handlebars',
+    filename: '../views/creating.handlebars',
+    chunks: ['creating.js'],
+  }),
+  new HtmlWebpackPlugin({
     template: 'static/login/index.html',
     filename: 'login/index.html',
-    chunks: ['check-user.js', 'login.js'],
+    chunks: ['login.js'],
   }),
   new HtmlWebpackPlugin({
     inject: 'head',
-    template: 'src/views/authorize.mustache',
-    filename: '../views/authorize.mustache',
-    chunks: ['check-user.js', 'authorize.js'],
+    template: 'src/views/authorize.handlebars',
+    filename: '../views/authorize.handlebars',
+    chunks: ['authorize.js'],
   }),
   new HtmlWebpackPlugin({
-    inject: 'head',
-    template: 'src/views/local-token-service.mustache',
-    filename: '../views/local-token-service.mustache',
-    chunks: ['check-user.js'],
+    template: 'src/views/local-token-service.handlebars',
+    filename: '../views/local-token-service.handlebars',
+    chunks: ['local-token.js'],
   }),
   new HtmlWebpackPlugin({
-    template: 'src/views/tunnel_setup.mustache',
-    filename: '../views/tunnel_setup.mustache',
-    chunks: ['setup_subdomain.js'],
+    template: 'src/views/router-setup.handlebars',
+    filename: '../views/router-setup.handlebars',
+    chunks: ['router-setup.js'],
+  }),
+  new HtmlWebpackPlugin({
+    template: 'src/views/tunnel-setup.handlebars',
+    filename: '../views/tunnel-setup.handlebars',
+    chunks: ['setup-subdomain.js'],
+  }),
+  new HtmlWebpackPlugin({
+    template: 'src/views/wifi-setup.handlebars',
+    filename: '../views/wifi-setup.handlebars',
+    chunks: ['wifi-setup.js'],
   }),
 ];
 
 const webpackWeb = {
   entry: {
-    'app.js': './static/js/app.js',
-    'check-user.js': './static/js/check-user.js',
-    'create-user.js': './static/js/create-user.js',
-    'login.js': './static/js/login.js',
-    'authorize.js': './static/js/authorize.js',
-    'setup_subdomain.js': './static/js/setup_subdomain.js',
+    'app.js': ['./static/js/check-user.js', './static/js/app.js'],
+    'connecting.js': ['./static/js/connecting.js'],
+    'create-user.js': ['./static/js/create-user.js'],
+    'creating.js': ['./static/js/creating.js'],
+    'login.js': ['./static/js/check-user.js', './static/js/login.js'],
+    'authorize.js': ['./static/js/check-user.js', './static/js/authorize.js'],
+    'local-token.js': [
+      './static/js/check-user.js',
+      './static/js/local-token.js',
+    ],
+    'router-setup.js': ['./static/js/router-setup.js'],
+    'setup-subdomain.js': ['./static/js/setup-subdomain.js'],
+    'wifi-setup.js': ['./static/js/wifi-setup.js'],
     buildCss: [
       // css for static/index.html
       './static/css/app.css',
@@ -137,10 +191,12 @@ const webpackWeb = {
       './static/css/rules-common.css',
       './static/css/rules.css',
       './static/css/rule.css',
+      './static/css/logs.css',
       './static/css/addons-form.css',
+      './node_modules/mobile-drag-drop/default.css',
     ],
   },
-  mode: 'development',
+  mode: 'production',
   target: 'web',
   optimization: {
     splitChunks: {
@@ -155,26 +211,59 @@ const webpackWeb = {
     },
   },
   output: {
-    path: path.join(__dirname, 'build/static'),
+    path: path.join(__dirname, 'build', 'static'),
     filename: 'bundle/[hash]-[name]',
     publicPath: '/',
   },
   module: {
     rules: [
       {
-        // schema-utils uses ES7 Spread Operator.
-        test: /schema-utils\.js$/,
+        test: /.\/static\/js\/.*\.js$/,
+        include: path.resolve(__dirname, 'static'),
         use: [
           {
             loader: 'babel-loader',
             query: {
-              plugins: ['transform-object-rest-spread'],
+              babelrc: false,
+              sourceType: 'script',
+              presets: [
+                ['@babel/preset-env', {
+                  modules: 'commonjs',
+                  targets: {
+                    chrome: '43',
+                    opera: '29',
+                    edge: '14',
+                    firefox: '52',
+                    safari: '10.1',
+                    ios: '10',
+                  },
+                  useBuiltIns: 'usage',
+                  corejs: 3,
+                }],
+              ],
+              plugins: ['@babel/plugin-proposal-object-rest-spread'],
             },
           },
         ],
       },
       {
         test: /\.css$/,
+        include: path.resolve(__dirname, 'node_modules', 'mobile-drag-drop'),
+        use: [
+          {
+            loader: MiniCssExtractPlugin.loader,
+          },
+          {
+            loader: 'css-loader',
+            options: {
+              sourceMap: true,
+            },
+          },
+        ],
+      },
+      {
+        test: /\.css$/,
+        include: path.resolve(__dirname, 'static'),
         use: [
           {
             loader: MiniCssExtractPlugin.loader,
@@ -189,25 +278,22 @@ const webpackWeb = {
       },
       {
         test: /\.html$/,
-        use: {
-          loader: 'html-loader',
-          options: {
-            attrs: ['img:src'],
-            root: path.join(__dirname, 'static'),
-            minimize: true,
+        use: [
+          {
+            loader: 'html-loader',
+            options: {
+              attrs: ['img:src'],
+              root: path.join(__dirname, 'static'),
+              minimize: true,
+            },
           },
-        },
+        ],
       },
       {
         test:
           /(?!\/uploads\/floorplan)\.(png|jpg|gif|svg|eot|ttf|woff|woff2)$/,
+        include: path.resolve(__dirname, 'static'),
         use: [
-          {
-            loader: 'cache-loader',
-            options: {
-              cacheDirectory: 'build/.cache/image',
-            },
-          },
           {
             loader: 'url-loader',
             options: {
@@ -215,25 +301,7 @@ const webpackWeb = {
               fallback: 'file-loader',
               publicPath: '/images',
               outputPath: 'images',
-            },
-          },
-          {
-            loader: 'image-webpack-loader',
-            options: {
-              mozjpeg: {
-                progressive: true,
-                quality: 80,
-              },
-              pngquant: {
-                quality: '65-90',
-                speed: 4,
-              },
-              optipng: {
-                enabled: true,
-              },
-              gifsicle: {
-                interlaced: false,
-              },
+              esModule: false,
             },
           },
         ],
@@ -249,7 +317,49 @@ const webpackWeb = {
   devtool: 'source-map',
 };
 
+const pluginsSW = [
+  new webpack.BannerPlugin({
+    banner: `const VERSION = '${uuidv1()}';`,
+    raw: true,
+  }),
+  new ExtractTextPlugin(
+    {filename: 'service-worker.js',
+     allChunks: true}
+  ),
+];
+
+const webpackSW = {
+  entry: {
+    'service-worker.js': './static/service-worker.js',
+  },
+  mode: 'production',
+  target: 'webworker',
+  output: {
+    path: path.join(__dirname, 'build', 'static'),
+    filename: '[name]_',
+  },
+  module: {
+    rules: [
+      {
+        test: /\.js$/,
+        include: path.resolve(__dirname, 'static'),
+        use: ExtractTextPlugin.extract({
+          use: {
+            loader: 'raw-loader',
+            options: {
+              esModule: false,
+            },
+          },
+        }),
+      },
+    ],
+  },
+  plugins: pluginsSW,
+  devtool: false,
+};
+
 module.exports = [
   webpackNode,
   webpackWeb,
+  webpackSW,
 ];

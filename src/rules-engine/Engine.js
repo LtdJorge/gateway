@@ -1,8 +1,10 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+
+'use strict';
 
 const Database = require('./Database');
 const Rule = require('./Rule');
@@ -57,6 +59,7 @@ class Engine {
    */
   async addRule(rule) {
     const id = await Database.createRule(rule.toDescription());
+    // eslint-disable-next-line require-atomic-updates
     rule.id = id;
     this.rules[id] = rule;
     await rule.start();
@@ -89,7 +92,7 @@ class Engine {
   deleteRule(ruleId) {
     if (!this.rules[ruleId]) {
       return Promise.reject(
-        new Error(`Rule ${ruleId} already does not exist`));
+        new Error(`Rule ${ruleId} does not exist`));
     }
     return Database.deleteRule(ruleId).then(() => {
       this.rules[ruleId].stop();

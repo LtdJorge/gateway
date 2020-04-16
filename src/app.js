@@ -1,5 +1,5 @@
 /*
- * Things Gateway App.
+ * WebThings Gateway App.
  *
  * Back end main script.
  *
@@ -8,12 +8,17 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+'use strict';
+
 // Set up the user profile.
 const UserProfile = require('./user-profile');
 UserProfile.init();
 const migration = UserProfile.migrate();
 
-// Dependencies
+// Causes a timestamp to be prepended to console log lines.
+require('./log-timestamps');
+
+// External Dependencies
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
@@ -24,30 +29,44 @@ const bodyParser = require('body-parser');
 const GetOpt = require('node-getopt');
 const config = require('config');
 const path = require('path');
-const mustacheExpress = require('mustache-express');
+const expressHandlebars = require('express-handlebars');
+const ipRegex = require('ip-regex');
+const SegfaultHandler = require('segfault-handler');
+
+// Internal Dependencies
 const addonManager = require('./addon-manager');
-const db = require('./db');
-const Router = require('./router');
-const TunnelService = require('./ssltunnel');
-const JSONWebToken = require('./models/jsonwebtoken');
 const Constants = require('./constants');
+const db = require('./db');
+const mDNSserver = require('./mdns-server');
+const Logs = require('./models/logs');
+const platform = require('./platform');
+const Router = require('./router');
+const sleep = require('./sleep');
+const Things = require('./models/things');
+const TunnelService = require('./ssltunnel');
+const {RouterSetupApp, isRouterConfigured} = require('./router-setup');
+const {WiFiSetupApp, isWiFiConfigured} = require('./wifi-setup');
 
-// Causes a timestamp to be prepended to console log lines.
-require('./log-timestamps');
+SegfaultHandler.registerHandler(path.join(UserProfile.logDir, 'crash.log'));
 
-// The following causes an instance of AppInstance to be created.
-// This is then used in other places (like src/addons/plugin/ipc.js)
-require('./app-instance');
-
-// Open the database
+// Open the databases
 db.open();
+Logs.open();
 
-const httpServer = http.createServer();
-const httpApp = createGatewayApp(httpServer);
+const servers = {};
+servers.http = http.createServer();
+const httpApp = createGatewayApp(servers.http, false);
 
-let httpsServer = createHttpsServer();
+servers.https = createHttpsServer();
 let httpsApp = null;
 
+/**
+ * Creates an HTTPS server object, if successful. If there are no public and
+ * private keys stored for the tunnel service, null is returned.
+ *
+ * @param {}
+ * @return {Object|null} https server object if successful, else NULL
+ */
 function createHttpsServer() {
   if (!TunnelService.hasCertificates()) {
     return null;
@@ -64,59 +83,112 @@ function createHttpsServer() {
   return https.createServer(options);
 }
 
+let httpsAttempts = 5;
 function startHttpsGateway() {
-  let port = config.get('ports.https');
-  const cliOptions = getOptions();
-  if (typeof cliOptions.port === 'number') {
-    port = cliOptions.port;
+  const port = config.get('ports.https');
+
+  if (!servers.https) {
+    servers.https = createHttpsServer();
+    if (!servers.https) {
+      httpsAttempts -= 1;
+      if (httpsAttempts < 0) {
+        console.error('Unable to create HTTPS server after several tries');
+        gracefulExit();
+        process.exit(0);
+      }
+
+      return sleep(4000).then(startHttpsGateway);
+    }
   }
 
-  if (!httpsServer) {
-    httpsServer = createHttpsServer();
-  }
+  httpsApp = createGatewayApp(servers.https, true);
+  servers.https.on('request', httpsApp);
 
-  httpsApp = createGatewayApp(httpsServer);
-  httpsServer.on('request', httpsApp);
+  const promises = [];
 
   // Start the HTTPS server
-  httpsServer.listen(port, function() {
-    migration.then(function() {
-      addonManager.loadAddons();
+  promises.push(new Promise((resolve) => {
+    servers.https.listen(port, () => {
+      migration.then(() => {
+        // load existing things from the database
+        return Things.getThings();
+      }).then(() => {
+        addonManager.loadAddons();
+      });
+      rulesEngineConfigure();
+      console.log('HTTPS server listening on port',
+                  servers.https.address().port);
+      resolve();
     });
-    rulesEngineConfigure(httpsServer);
-    console.log('Listening on port', httpsServer.address().port);
-    commandParserConfigure(httpsServer);
-  });
+  }));
 
   // Redirect HTTP to HTTPS
-  httpServer.on('request', createRedirectApp(httpsServer.address().port));
+  servers.http.on('request', httpsApp);
   const httpPort = config.get('ports.http');
-  httpServer.listen(httpPort, function() {
-    console.log('Redirector listening on port', httpServer.address().port);
-  });
+
+  promises.push(new Promise((resolve) => {
+    servers.http.listen(httpPort, () => {
+      console.log('Redirector listening on port', servers.http.address().port);
+      resolve();
+    });
+  }));
+
+  return Promise.all(promises).then(() => servers.https);
 }
 
 function startHttpGateway() {
-  httpServer.on('request', httpApp);
+  servers.http.on('request', httpApp);
 
-  let port = config.get('ports.http');
-  const options = getOptions();
-  if (typeof options.port === 'number') {
-    port = options.port;
-  }
+  const port = config.get('ports.http');
 
-  httpServer.listen(port, function() {
-    migration.then(function() {
-      addonManager.loadAddons();
+  return new Promise((resolve) => {
+    servers.http.listen(port, () => {
+      migration.then(() => {
+        // load existing things from the database
+        return Things.getThings();
+      }).then(() => {
+        addonManager.loadAddons();
+      });
+      rulesEngineConfigure();
+      console.log('HTTP server listening on port', servers.http.address().port);
+      resolve();
     });
-    rulesEngineConfigure(httpServer);
-    console.log('Listening on port', httpServer.address().port);
-    commandParserConfigure(httpServer);
   });
 }
 
 function stopHttpGateway() {
-  httpServer.removeListener('request', httpApp);
+  servers.http.removeListener('request', httpApp);
+  servers.http.close();
+}
+
+function startWiFiSetup() {
+  console.log('Starting WiFi setup');
+  servers.http.on('request', WiFiSetupApp.onRequest);
+
+  const port = config.get('ports.http');
+
+  servers.http.listen(port);
+}
+
+function stopWiFiSetup() {
+  console.log('Stopping WiFi Setup');
+  servers.http.removeListener('request', WiFiSetupApp.onRequest);
+  servers.http.close();
+}
+
+function startRouterSetup() {
+  console.log('Starting Router Setup');
+  servers.http.on('request', RouterSetupApp.onRequest);
+
+  const port = config.get('ports.http');
+
+  servers.http.listen(port);
+}
+
+function stopRouterSetup() {
+  console.log('Stopping Router Setup');
+  servers.http.removeListener('request', RouterSetupApp.onRequest);
+  servers.http.close();
 }
 
 function getOptions() {
@@ -130,8 +202,7 @@ function getOptions() {
   // Command line arguments
   const getopt = new GetOpt([
     ['d', 'debug', 'Enable debug features'],
-    ['p', 'port=PORT', 'Specify the server port to use'],
-    ['h', 'help', 'Display help' ],
+    ['h', 'help', 'Display help'],
     ['v', 'verbose', 'Show verbose output'],
   ]);
 
@@ -158,48 +229,79 @@ function getOptions() {
 }
 
 /**
- * The command parser talks to the server over the public HTTP/WS API,
- * the gateway needs to configure it with a JWT and a server address
- * @param {http.Server|https.Server} server
+ * Set up the rules engine.
  */
-function commandParserConfigure(server) {
-  const commandParser = require('./controllers/commands_controller.js');
-  let protocol = 'https';
-  if (server instanceof http.Server) {
-    protocol = 'http';
-  }
-  const gatewayHref = `${protocol}://127.0.0.1:${server.address().port}`;
-  JSONWebToken.issueToken(-1).then((jwt) => {
-    commandParser.configure(gatewayHref, jwt);
-  });
+function rulesEngineConfigure() {
+  const rulesEngine = require('./rules-engine/index');
+  rulesEngine.configure();
 }
 
-/**
- * Because the rules engine talks to the server over the public HTTP/WS API,
- * the gateway needs to configure it with a JWT and a server address
- * @param {http.Server|https.Server} server
- */
-function rulesEngineConfigure(server) {
-  const rulesEngine = require('./rules-engine/index.js');
-  let protocol = 'https';
-  if (server instanceof http.Server) {
-    protocol = 'http';
-  }
-  const gatewayHref = `${protocol}://127.0.0.1:${server.address().port}`;
-  rulesEngine.configure(gatewayHref);
-}
-
-function createApp() {
+function createApp(isSecure) {
+  const port = isSecure ? config.get('ports.https') : config.get('ports.http');
   const app = express();
-  app.engine('mustache', mustacheExpress());
-  app.set('view engine', 'mustache');
+  app.engine(
+    'handlebars',
+    expressHandlebars({
+      defaultLayout: undefined, // eslint-disable-line no-undefined
+      layoutsDir: Constants.VIEWS_PATH,
+    })
+  );
+  app.set('view engine', 'handlebars');
   app.set('views', Constants.VIEWS_PATH);
 
+  // Redirect based on https://https.cio.gov/apis/
+  app.use((request, response, next) => {
+    // If the server is in non-HTTPS mode, or the request is already HTTPS,
+    // just carry on.
+    if (!isSecure || request.secure) {
+      next();
+      return;
+    }
+
+    // If the Host header was not set, disallow this request.
+    if (!request.hostname) {
+      response.sendStatus(403);
+      return;
+    }
+
+    // If the request is for a bare hostname, a .local address, or an IP
+    // address, allow it.
+    if (request.hostname.indexOf('.') < 0 ||
+        request.hostname.endsWith('.local') ||
+        ipRegex({exact: true}).test(request.hostname)) {
+      next();
+      return;
+    }
+
+    if (request.method !== 'GET') {
+      response.sendStatus(403);
+      return;
+    }
+
+    if (request.headers.authorization) {
+      response.sendStatus(403);
+      return;
+    }
+
+    let httpsUrl = `https://${request.hostname}`;
+
+    // If we're behind forwarding we can redirect to the port-free https url
+    if (port !== 443 && !config.get('behindForwarding')) {
+      httpsUrl += `:${port}`;
+    }
+
+    httpsUrl += request.url;
+    response.redirect(301, httpsUrl);
+  });
+
+  // Use bodyParser to access the body of requests
   app.use(bodyParser.urlencoded({
     extended: false,
   }));
-  app.use(bodyParser.json());   // Use bodyParser to access the body of requests
-  app.use(fileUpload());        // Use fileUpload to handle multi-part uploads
+  app.use(bodyParser.json({limit: '1mb'}));
+
+  // Use fileUpload to handle multi-part uploads
+  app.use(fileUpload());
 
   return app;
 }
@@ -208,8 +310,8 @@ function createApp() {
  * @param {http.Server|https.Server} server
  * @return {express.Router}
  */
-function createGatewayApp(server) {
-  const app = createApp();
+function createGatewayApp(server, isSecure) {
+  const app = createApp(isSecure);
   const opt = getOptions();
 
   // Inject WebSocket support
@@ -220,67 +322,78 @@ function createGatewayApp(server) {
   return app;
 }
 
-function createRedirectApp(port) {
-  const app = createApp();
+const serverStartup = {
+  promise: Promise.resolve(),
+};
 
-  // Allow LE challenges, used when renewing domain.
-  app.use(
-    /^\/\.well-known\/acme-challenge\/.*/,
-    function(request, response, next) {
-      if (request.method !== 'GET') {
-        response.sendStatus(403);
-        return;
+switch (platform.getOS()) {
+  case 'linux-raspbian':
+    migration.then(() => {
+      return isWiFiConfigured();
+    }).then((configured) => {
+      if (!configured) {
+        WiFiSetupApp.onConnection = () => {
+          stopWiFiSetup();
+          startGateway();
+        };
+        startWiFiSetup();
+      } else {
+        startGateway();
       }
-
-      const reqPath = path.join(Constants.BUILD_STATIC_PATH, request.path);
-      if (fs.existsSync(reqPath)) {
-        response.sendFile(reqPath);
-        return;
-      }
-
-      next();
     });
-
-  // Redirect based on https://https.cio.gov/apis/
-  app.use(function(request, response) {
-    if (request.method !== 'GET') {
-      response.sendStatus(403);
-      return;
-    }
-    if (request.headers.authorization) {
-      response.sendStatus(403);
-      return;
-    }
-    let httpsUrl = `https://${request.hostname}`;
-    // If we're behind forwarding we can redirect to the port-free https url
-    if (port !== 443 && !config.get('behindForwarding')) {
-      httpsUrl += `:${port}`;
-    }
-    httpsUrl += request.url;
-    response.redirect(301, httpsUrl);
-  });
-
-  return app;
+    break;
+  case 'linux-openwrt':
+    migration.then(() => {
+      return isRouterConfigured();
+    }).then((configured) => {
+      if (!configured) {
+        RouterSetupApp.onConnection = () => {
+          stopRouterSetup();
+          startGateway();
+        };
+        startRouterSetup();
+      } else {
+        startGateway();
+      }
+    });
+    break;
+  default:
+    startGateway();
+    break;
 }
 
-let serverStartup = Promise.resolve();
+function startGateway() {
+  // if we have the certificates installed, we start https
+  if (TunnelService.hasCertificates()) {
+    serverStartup.promise = TunnelService.userSkipped().then((skipped) => {
+      const promise = startHttpsGateway();
 
-// if we have the certificates installed, we start https
-if (TunnelService.hasCertificates()) {
-  serverStartup = TunnelService.userSkipped().then(function(res) {
-    if (res) {
-      startHttpGateway();
-    } else {
-      startHttpsGateway();
-      TunnelService.hasTunnelToken().then(function(result) {
-        if (result) {
-          TunnelService.start();
-        }
+      // if the user opted to skip the tunnel, but still has certificates, go
+      // ahead and start up the https server.
+      if (skipped) {
+        return promise;
+      }
+
+      // if they did not opt to skip, check if they have a tunnel token. if so,
+      // start the tunnel.
+      return promise.then((server) => {
+        TunnelService.hasTunnelToken().then((result) => {
+          if (result) {
+            TunnelService.setServerHandle(server);
+            TunnelService.start();
+          }
+        });
       });
-    }
-  });
-} else {
-  startHttpGateway();
+    });
+  } else {
+    serverStartup.promise = startHttpGateway();
+  }
+}
+
+function gracefulExit() {
+  addonManager.unloadAddons();
+  mDNSserver.server.cleanup();
+  TunnelService.stop();
 }
 
 if (config.get('cli')) {
@@ -292,22 +405,40 @@ if (config.get('cli')) {
   });
 
   // Do graceful shutdown when Control-C is pressed.
-  process.on('SIGINT', function() {
-    console.log('Control-C: unloading add-ons...');
-    addonManager.unloadAddons();
-    TunnelService.stop();
+  process.on('SIGINT', () => {
+    console.log('Control-C: Exiting gracefully');
+    gracefulExit();
     process.exit(0);
   });
 }
 
 // function to stop running server and start https
-TunnelService.switchToHttps = function() {
+TunnelService.switchToHttps = () => {
   stopHttpGateway();
-  startHttpsGateway();
+  startHttpsGateway().then((server) => {
+    TunnelService.setServerHandle(server);
+  });
 };
 
-module.exports = { // for testing
-  httpServer: httpServer,
-  server: httpsServer,
-  serverStartup: serverStartup,
+// This part starts our Service Discovery process.
+// We check to see if mDNS should be setup in default mode, or has a previous
+// user setup a unique domain. Then we start it.
+mDNSserver.getmDNSstate().then((state) => {
+  try {
+    mDNSserver.getmDNSconfig().then((mDNSconfig) => {
+      console.log(`DNS config is: ${mDNSconfig.host}`);
+      mDNSserver.server.changeProfile(mDNSconfig);
+      mDNSserver.server.setState(state);
+    });
+  } catch (err) {
+    // if we failed to startup mDNS it's not the end of the world log it
+    // and carry on
+    console.error(`Service Discover failed to start with error: ${err}`);
+  }
+});
+
+// for testing
+module.exports = {
+  servers,
+  serverStartup,
 };

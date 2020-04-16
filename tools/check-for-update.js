@@ -4,9 +4,10 @@ const fetch = require('node-fetch');
 const semver = require('semver');
 
 const pkg = require('../package.json');
+const Utils = require('../src/utils');
 
 fetch(config.get('updateUrl'),
-      {headers: {'User-Agent': `mozilla-iot-gateway/${pkg.version}`}})
+      {headers: {'User-Agent': Utils.getGatewayUserAgent()}})
   .then((res) => {
     return res.json();
   })
@@ -45,7 +46,7 @@ fetch(config.get('updateUrl'),
       if (nodeModulesUrl && gatewayUrl) {
         exec(`./gateway/tools/upgrade.sh ${gatewayUrl} ${nodeModulesUrl}`,
              {cwd: '..'},
-             function(err, stdout, stderr) {
+             (err, stdout, stderr) => {
                if (err) {
                  console.error('Upgrade failed', err, stdout, stderr);
                } else {

@@ -23,17 +23,17 @@ addonManager.on(Constants.ADAPTER_ADDED, (adapter) => {
 
 addonManager.on(Constants.THING_ADDED, (thing) => {
   console.log('debug: Got:', Constants.THING_ADDED,
-              'notification for', thing.name);
+              'notification for', thing.title);
 });
 
 addonManager.on(Constants.THING_REMOVED, (thing) => {
   console.log('debug: Got:', Constants.THING_REMOVED,
-              'notification for', thing.name);
+              'notification for', thing.title);
 });
 
 addonManager.on(Constants.PROPERTY_CHANGED, (property) => {
   console.log('debug: Got:', Constants.PROPERTY_CHANGED,
-              'notification for:', property.device.name,
+              'notification for:', property.device.title,
               'property:', property.name,
               'value:', property.value);
 });
@@ -57,12 +57,12 @@ debugController.get('/adapters', (request, response) => {
  * Add a new device
  */
 debugController.get('/addNewThing', (request, response) => {
-  addonManager.addNewThing(60).then((thing) => {
-    console.log('debugController: addNewThing added thing', thing);
+  addonManager.addNewThing(60).then(() => {
+    console.log('debugController: addNewThing added thing');
   }, () => {
     console.log('debugController: addNewThing cancelled');
   });
-  response.status(204).send();
+  response.sendStatus(204);
 });
 
 /**
@@ -70,7 +70,7 @@ debugController.get('/addNewThing', (request, response) => {
  */
 debugController.get('/cancelAddNewThing', (request, response) => {
   addonManager.cancelAddNewThing();
-  response.status(204).send();
+  response.sendStatus(204);
 });
 
 /**
@@ -79,7 +79,7 @@ debugController.get('/cancelAddNewThing', (request, response) => {
 debugController.get('/cancelRemoveThing/:thingId', (request, response) => {
   const thingId = request.params.thingId;
   addonManager.cancelRemoveThing(thingId);
-  response.status(204).send();
+  response.sendStatus(204);
 });
 
 /**

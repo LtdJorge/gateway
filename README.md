@@ -1,14 +1,21 @@
-# Things Gateway by Mozilla
+# WebThings Gateway by Mozilla
 
-[![Build Status](https://travis-ci.org/mozilla-iot/gateway.svg?branch=master)](https://travis-ci.org/mozilla-iot/gateway)
+[![Build Status](https://github.com/mozilla-iot/gateway/workflows/Build/badge.svg)](https://github.com/mozilla-iot/gateway/actions?query=workflow%3ABuild)
 [![codecov](https://codecov.io/gh/mozilla-iot/gateway/branch/master/graph/badge.svg)](https://codecov.io/gh/mozilla-iot/gateway)
 [![dependencies](https://david-dm.org/mozilla-iot/gateway.svg)](https://david-dm.org/mozilla-iot/gateway)
-[![devdependencies](https://david-dm.org/mozilla-iot/gateway/dev-status.svg)](https://david-dm.org/mozilla-iot/gateway#info=devDependencies)
+[![devDependencies](https://david-dm.org/mozilla-iot/gateway/dev-status.svg)](https://david-dm.org/mozilla-iot/gateway?type=dev)
+[![optionalDependencies](https://david-dm.org/mozilla-iot/gateway/optional-status.svg)](https://david-dm.org/mozilla-iot/gateway?type=optional)
 [![license](https://img.shields.io/badge/license-MPL--2.0-blue.svg)](LICENSE)
 
 Web of Things gateway.
 
-If you have a Rasberry Pi, the easiest way to use the gateway is to [download and flash](http://iot.mozilla.org/gateway/) a pre-built software image from Mozilla to an SD card. Otherwise you can build it from source yourself (see below).
+## Installation
+
+* If you have a Rasberry Pi, the easiest way to use the gateway is to [download and flash](http://iot.mozilla.org/gateway/) a pre-built software image from Mozilla to an SD card.
+* If you prefer to use Docker, we have a prebuilt Docker image available [here](https://hub.docker.com/r/mozillaiot/gateway), for both ARM and amd64.
+* On Fedora, Debian, Raspbian, or Ubuntu, you can install the relevant .rpm or .deb package from the [releases page](https://github.com/mozilla-iot/gateway/releases).
+* On Arch Linux, you can install the [webthings-gateway AUR package](https://aur.archlinux.org/packages/webthings-gateway/).
+* Otherwise, you can build it from source yourself (see below).
 
 ## Prerequisites for Building
 
@@ -18,22 +25,45 @@ If you have a Rasberry Pi, the easiest way to use the gateway is to [download an
 
 If you're installing on a Raspberry Pi then you may need to set up the OS on the Raspberry Pi first. [See here](https://github.com/mozilla-iot/wiki/wiki/Setting-up-Raspberry-Pi) for instructions.
 
+### Update Package Cache (Linux only)
+
+Under Ubuntu/Debian Linux:
+```
+$ sudo apt update
+```
+
+Under Fedora Linux:
+```
+$ sudo dnf --refresh upgrade
+```
+
 ### Install pkg-config
 
-Under Linux:
+Under Ubuntu/Debian Linux:
 ```
-$ sudo apt-get install pkg-config
+$ sudo apt install pkg-config
 ```
 
-Under OSX:
+Under Fedora Linux:
+```
+$ sudo dnf install pkgconfig
+```
 
-[See here](http://macappstore.org/pkg-config/).
+Under macOS:
+```
+$ brew install pkg-config
+```
 
 ### Install curl (needed to install nvm)
 
-Under Linux:
+Under Ubuntu/Debian Linux:
 ```
-$ sudo apt-get install curl
+$ sudo apt install curl
+```
+
+Under Fedora Linux:
+```
+$ sudo dnf install curl
 ```
 
 ### Install nvm (Recommended)
@@ -41,27 +71,14 @@ $ sudo apt-get install curl
 nvm allows you to easily install different versions of node. To install nvm:
 
 ```
-$ curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.33.8/install.sh | bash
+$ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.2/install.sh | bash
 ```
 
-Close and reopen your terminal window. Use nvm to install a LTS version of node and set the
-default version.
+Reinitialize your terminal session.
 
 ```
-$ nvm install --lts
-$ nvm use --lts
-$ nvm alias default lts/*
+$ . ~/.bashrc
 ```
-
-Verify that node and npm have been installed:
-```
-$ npm --version
-5.6.0
-$ node --version
-v8.9.4
-```
-
-Note: these versions might differ from the LTS version installed locally.
 
 ### Install node (if you didn't use nvm)
 
@@ -69,96 +86,126 @@ Note: these versions might differ from the LTS version installed locally.
 
 Follow the directions from [NodeJS](https://nodejs.org) to install on your platform.
 
-### Set up Bluetooth permissions
+### Set up Bluetooth permissions (Linux only)
 
-The following is required in order to let node use the Bluetooth adapter.
+The following is required in order to let node and python3 use the Bluetooth adapter.
 
 ```
 $ sudo setcap cap_net_raw+eip $(eval readlink -f `which node`)
+$ sudo setcap cap_net_raw+eip $(eval readlink -f `which python3`)
+```
+
+### Install Bluetooth and BT Low Energy support libraries (Linux only)
+
+The following are required in order to install the Python modules that support Bluetooth
+
+Under Ubuntu/Debian Linux:
+```
+$ sudo apt install libboost-python-dev libboost-thread-dev libbluetooth-dev libglib2.0-dev
+```
+
+Under Fedora Linux:
+```
+$ sudo dnf install boost-python2-devel boost-python3-devel boost-devel bluez-libs-devel glib2-devel
 ```
 
 ### Install libusb and libudev (Linux only)
+
+Under Ubuntu/Debian Linux:
 ```
-$ sudo apt-get install libusb-1.0-0-dev libudev-dev
+$ sudo apt install libusb-1.0-0-dev libudev-dev
+```
+
+Under Fedora Linux:
+```
+$ sudo dnf install libudev-devel libusb1-devel
+```
+
+### Install autoconf
+
+Under Ubuntu/Debian Linux:
+```
+$ sudo apt install autoconf
+```
+
+Under Fedora Linux:
+```
+$ sudo dnf install autoconf
+```
+
+Under macOS:
+```
+$ brew install autoconf
+```
+
+### Install libpng (Linux only)
+
+Under x86-64 or x86 Ubuntu/Debian Linux:
+```
+$ sudo apt install libpng16-16
+```
+
+Under ARM Ubuntu/Debian Linux:
+```
+$ sudo apt install libpng-dev
+```
+
+Under Fedora Linux:
+```
+$ sudo dnf install libpng-devel
+```
+
+### Install libffi
+
+Under Ubuntu/Debian Linux:
+```
+$ sudo apt install libffi-dev
+```
+
+Under Fedora Linux:
+```
+$ sudo dnf install libffi-devel
+```
+
+Under macOS:
+```
+$ brew install libffi
 ```
 
 ### Install git
 
 You'll need git to checkout the repositories.
 
-`$ sudo apt-get install git`
-
-### Install gcc (needed to build open-zwave)
-
-Under Linux:
+Under Ubuntu/Debian Linux:
 ```
-$ sudo apt-get install build-essential
+$ sudo apt install git
 ```
 
-### Build and Install openzwave
-
+Under Fedora Linux:
 ```
-$ cd
-$ git clone https://github.com/OpenZWave/open-zwave.git
-$ cd open-zwave
-$ CFLAGS=-D_GLIBCXX_USE_CXX11_ABI=0 make && sudo CFLAGS=-D_GLIBCXX_USE_CXX11_ABI=0 make install
-$ sudo ldconfig
+$ sudo dnf install git
 ```
 
-Note: You may need to manually add `/usr/local/lib` to your `LD_LIBRARY_PATH` enviroment variable by adding the following to your `~/.profile` file:
+### Install gcc
 
-`export LD_LIBRARY_PATH=/usr/local/lib/:$LD_LIBRARY_PATH`
+Under Ubuntu/Debian Linux:
+```
+$ sudo apt install build-essential
+```
 
-You can run this on the command line as well so it has immediate effect. After
-running it, you should run `sudo ldconfig` again to make sure the configuration
-change goes through.
+Under Fedora Linux:
+```
+$ sudo dnf group install "C Development Tools and Libraries"
+```
 
-### Install OpenSSL (Windows only)
-
-The Gateway depends on [`ursa`](https://github.com/JoshKaufman/ursa), which requires OpenSSL.
-
-Install [OpenSSL](http://slproweb.com/products/Win32OpenSSL.html) =< 1.0.2 (normal, not light) in the same bitness as your Node.js.
-
-[See here](https://github.com/JoshKaufman/ursa#windows-install).
-
-### Install Python 2.7 (Windows only)
-
-PageKite works with Python 2.7.
-
-Install Python 2.7 from [here](https://www.python.org/downloads/windows/).
-
-Enable "register extensions" on installing package, or associate file extension `.py` with python.
-
-### Install Python 3.X and packages (Optional, Windows only)
+### Install Python Add-on Bindings (Optional)
 
 This is required in order to use Python 3 add-ons, e.g. [tplink-adapter](https://github.com/mozilla-iot/tplink-adapter/).
 
-* Install Python 3.X (ideally 3.4+) from [here](https://www.python.org/downloads/windows/).
-  * Enable "Install launcher for all users" and "Add Python 3.X to PATH" on installing.
-  * Enable `python3` command using the following.
+Execute the following command. On Linux, use sudo.
+
 ```
-mklink "C:\path\to\python3\python3.exe" "C:\path\to\python3\python.exe"
-```
-* Install nanomsg.
-  * Follow the directions from [nanomsg](https://github.com/nanomsg/nanomsg) to install in the same bitness as your Python 3.X.
-  * If you want to build for 64-bit, you need to execute cmake with `-DCMAKE_GENERATOR_PLATFORM=x64`.
-  * Add `C:\path\to\nanomsg\bin` to `PATH`.
-* Install nnpy
-```
-git clone https://github.com/nanomsg/nnpy.git
-cd nnpy
-```
-Add a file: site.cfg
-```
-[DEFAULT]
-include_dirs = C:\path\to\nanomsg\include\nanomsg
-library_dirs = C:\path\to\nanomsg\lib
-host_library = C:\path\to\nanomsg\bin\nanomsg.dll
-```
-Execute the following command as an administrator.
-```
-python3 -m pip install .
-python3 -m pip install git+https://github.com/mozilla-iot/gateway-addon-python.git
+python3 -m pip install git+https://github.com/mozilla-iot/gateway-addon-python#egg=gateway_addon
 ```
 
 **Note:** 2018-04-12: `pip3` has an [issue](https://github.com/pypa/pip/issues/4251) with some languages.
@@ -168,7 +215,6 @@ python3 -m pip install git+https://github.com/mozilla-iot/gateway-addon-python.g
 * Clone the GitHub repository (or fork it first):
 
     ```
-    $ cd
     $ git clone https://github.com/mozilla-iot/gateway.git
     ```
 
@@ -178,14 +224,39 @@ python3 -m pip install git+https://github.com/mozilla-iot/gateway-addon-python.g
     $ cd gateway
     ```
 
-* Install dependencies:
-    * **NOTE**: `yarn` is preferred but `npm install` will also work. To install `yarn`
-    run `npm install --global yarn` or for a more secure installation follow the
-    [directions for your OS](https://yarnpkg.com/en/docs/install).
+* If you have chosen to install nvm above, install and use an LTS version of node and then set the default version. The **`.nvmrc`** file will be used by nvm to determine which version of node to install.
 
     ```
-    $ yarn
+    $ nvm install
+    $ nvm use
+    $ nvm alias default $(node -v)
     ```
+
+* Verify that node and npm have been installed:
+
+    ```
+    $ node --version
+    v10.19.0
+    $ npm --version
+    6.14.0
+    ```
+
+    Note: these versions might differ from the LTS version installed locally.
+
+* Install dependencies:
+
+    ```
+    $ npm ci
+    ```
+
+* Add Firewall exceptions (Fedora Linux Only)
+
+    ```
+    $ sudo firewall-cmd --zone=public --add-port=4443/tcp --permanent
+    $ sudo firewall-cmd --zone=public --add-port=8080/tcp --permanent
+    $ sudo firewall-cmd --zone=public --add-port=5353/udp --permanent
+    ```
+
 
 * Set up domain:
     * If you plan to use Mozilla's provided tunneling service to set up a `*.mozilla-iot.org` domain:
@@ -217,6 +288,15 @@ python3 -m pip install git+https://github.com/mozilla-iot/gateway-addon-python.g
 
         * Load `https://localhost:4443` in your web browser (or use the server's IP address if loading remotely). Since you're using a self-signed certificate, you'll need to add a security exception in the browser.
 
+## Browser Support
+
+The Gateway only supports the following browsers, due to its use of the [`Fetch API`](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch) and [`WebSocket API`](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API):
+* Firefox 52+
+* Chrome 43+
+* Edge 14+
+* Safari 10.1+
+* Opera 29+
+
 ## Debugging
 
 If you are using VS Code, simply use the "launch" target. It will build the gateway in debugger mode.
@@ -227,9 +307,8 @@ If you are not using VS Code, run `npm run debug` and it will build the gateway 
 
 These steps are required on Debian (where python points to python 2.7)
 ```
-apt install python-pip
-apt install python3-pip
-pip3 install git+https://github.com/mycroftai/adapt#egg=adapt-parser
+$ sudo apt install python-pip python3-pip firefox openjdk-8-jre
+$ sudo python3 -m pip install git+https://github.com/mycroftai/adapt#egg=adapt-parser
 ```
 
 ## Running Tests
@@ -244,36 +323,50 @@ $ jest src/test/{test-name}.js
 ```
 (assumes you have the `jest` command on your `PATH`, otherwise use `./node_modules/jest/bin/jest.js`)
 
+To compare UI with parent branch:
+```
+$ npm run screenshots
+$ npm test
+```
+(if you have the screenshots in the folder `./browser-test-screenshots`, `npm test` should compare UI with screenshots stored)
+
 ## Source Code Structure
 
 * **`config/`** - Gateway configuration files
-* **`doc/`** - Additional documentation
 * **`image/`** - Tools for building the Raspberry Pi image
 * **`src/`**
   * **`addons-test/`** - Add-ons used strictly for testing
   * **`controllers/`** - App URL routes and their logic
   * **`models/`** - Data model and business logic
+  * **`platforms/`** - Platform-specific functionality
   * **`plugin/`** - Utility classes and methods used by add-ons
   * **`rules-engine/`** - The rules engine
   * **`test/`** - Integration tests
   * **`views/`** - HTML views
   * **`addon-loader.js`** - Script used for starting up Node-based add-ons
-  * **`addon-manager.js`** - Manages add-ons (e.g. ZigBee, Z-Wave)
+  * **`addon-manager.js`** - Manages add-ons (e.g. Zigbee, Z-Wave)
   * **`app.js`** - The main back end
-  * **`app-instance.js`** - Application wrapper for integration tests
+  * **`certificate-manager.js`** - Certificate registration and renewal, via Let's Encrypt
+  * **`command-utils.js`** - Utilities used by commands parser
   * **`constants.js`** - System-wide constants
   * **`db.js`** - Manages the SQLite3 database
   * **`deferred.js`** - Wraps up a promise in a slightly more convenient manner for passing around, or saving
+  * **`dynamic-require.js`** - Small utility to require code from file system, rather than webpacked bundle
   * **`ec-crypto.js`** - Elliptic curve helpers for the ES256 curve
   * **`jwt-middleware.js`** - Express middleware for determining authentication status
   * **`log-timestamps.js`** - Utilities for adding timestamps to console logging functions
+  * **`mdns-server.js`** - mDNS server
   * **`oauth-types.js`** - OAuth types
   * **`passwords.js`** - Password utilities
+  * **`platform.js`** - Platform-specific utilities
+  * **`push-service.js`** - Push notification service
   * **`router.js`** - Routes app URLs to controllers
+  * **`router-setup.js`** - Initial router setup code for OpenWrt
+  * **`sleep.js`** - Small utility to implement a promise-based sleep
   * **`ssltunnel.js`** - Utilities to determine state of tunnel and manage the PageKite process
-  * **`tunnel_setup.js`** - Express middleware to determine if the tunnel is set up
   * **`user-profile.js`** - Manages persistent user data
   * **`utils.js`** - Various utility functions
+  * **`wifi-setup.js`** - Initial Wi-Fi setup code for Raspbian
 * **`static/`** - Static CSS, JavaScript & image resources for web app front end
 * **`tools/`** - Helpful utilities (not part of the build)
 * **`package.json`** - npm module manifest

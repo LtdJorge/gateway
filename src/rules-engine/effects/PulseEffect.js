@@ -1,8 +1,10 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+
+'use strict';
 
 const assert = require('assert');
 const PropertyEffect = require('./PropertyEffect');
@@ -18,8 +20,15 @@ class PulseEffect extends PropertyEffect {
   constructor(desc) {
     super(desc);
     this.value = desc.value;
-    assert(typeof this.value === this.property.type,
-           'setpoint and property must be same type');
+    if (typeof this.value === 'number') {
+      assert(this.property.type === 'number' ||
+             this.property.type === 'integer',
+             'setpoint and property must be compatible types');
+    } else {
+      assert(typeof this.value === this.property.type,
+             'setpoint and property must be same type');
+    }
+
     this.on = false;
     this.oldValue = null;
   }
@@ -46,10 +55,10 @@ class PulseEffect extends PropertyEffect {
       // Activate the effect and save our current state to revert to upon
       // deactivation
       this.property.get().then((value) => {
-        if (value !== this.value) {
-          this.oldValue = value;
-        } else {
-          this.oldValue = null;
+        this.oldValue = value;
+        // Always set to the opposite (always toggle)
+        if (typeof value === 'boolean') {
+          this.oldValue = !this.value;
         }
         this.on = true;
         return this.property.set(this.value);

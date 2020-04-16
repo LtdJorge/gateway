@@ -10,12 +10,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-const uuid = require('uuid');
+
+'use strict';
+
+const {v4: uuidv4} = require('uuid');
 const jwt = require('jsonwebtoken');
 const assert = require('assert');
 
 const ec = require('../ec-crypto');
 const Database = require('../db');
+const Settings = require('./settings');
 
 const ROLE_USER_TOKEN = 'user_token';
 
@@ -58,7 +62,7 @@ class JSONWebToken {
    * @return {string} the JWT token signature.
    */
   static async issueToken(user) {
-    const {sig, token} = this.create(user);
+    const {sig, token} = await this.create(user);
     await Database.createJSONWebToken(token);
     return sig;
   }
@@ -73,7 +77,7 @@ class JSONWebToken {
    * @return {string} the JWT token signature.
    */
   static async issueOAuthToken(client, user, payload) {
-    const {sig, token} = this.create(user, Object.assign({
+    const {sig, token} = await this.create(user, Object.assign({
       client_id: client.id,
     }, payload));
     await Database.createJSONWebToken(token);
@@ -96,14 +100,21 @@ class JSONWebToken {
    * @return {Object} containing .sig (the jwt signature) and .token
    *  for storage in the database.
    */
-  static create(user, payload = {role: ROLE_USER_TOKEN}) {
+  static async create(user, payload = {role: ROLE_USER_TOKEN}) {
     const pair = ec.generateKeyPair();
 
-    const keyId = uuid.v4();
-    const sig = jwt.sign(payload, pair.private, {
+    const keyId = uuidv4();
+    const tunnelInfo = await Settings.getTunnelInfo();
+    const issuer = tunnelInfo.tunnelDomain;
+    const options = {
       algorithm: ec.JWT_ALGORITHM,
       keyid: keyId,
-    });
+    };
+    if (issuer) {
+      options.issuer = issuer;
+    }
+
+    const sig = jwt.sign(payload, pair.private, options);
 
     const token = {
       user,

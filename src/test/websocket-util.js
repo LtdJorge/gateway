@@ -10,6 +10,9 @@ const {server} = require('./common');
  * @return {WebSocket}
  */
 async function webSocketOpen(path, jwt) {
+  if (!server.address()) {
+    server.listen(0);
+  }
   const addr = server.address();
   const socketPath =
     `wss://127.0.0.1:${addr.port}${path}?jwt=${jwt}`;
@@ -35,14 +38,21 @@ async function webSocketOpen(path, jwt) {
  * Read a known amount of messages from a websocket
  * @param {WebSocket} ws
  * @param {number} expectedMessages
+ * @param {boolean?} ignoreConnected - Whether or not to ignore 'connected'
+ *                   messages
  * @return {Array<Object>} read messages
  */
-async function webSocketRead(ws, expectedMessages) {
+async function webSocketRead(ws, expectedMessages, ignoreConnected = true) {
   const messages = [];
   while (messages.length < expectedMessages) {
     if (ws.unreadMessages.length > 0) {
       const data = ws.unreadMessages.shift();
       const parsed = JSON.parse(data);
+
+      if (ignoreConnected && parsed.messageType === 'connected') {
+        continue;
+      }
+
       messages.push(parsed);
     } else {
       await e2p(ws, 'message');
@@ -62,7 +72,7 @@ async function webSocketSend(ws, message) {
   }
 
   await new Promise((resolve) => {
-    ws.send(message, function() {
+    ws.send(message, () => {
       resolve();
     });
   });

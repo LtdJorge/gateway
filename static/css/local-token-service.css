@@ -8,6 +8,7 @@ body.hidden {
 
 section {
   position: absolute;
+  overflow: auto;
 }
 
 a, a:visited {
@@ -35,7 +36,7 @@ a, a:visited {
   background-size: 3.2rem;
   background-repeat: no-repeat;
   background-position: 2rem;
-  background-image: url(/images/authorization.svg);
+  background-image: url('/images/authorization.svg');
 }
 
 .main-container {
@@ -61,6 +62,7 @@ code {
   display: block;
   padding: 2rem;
   background: #305067;
+  overflow-x: auto;
 }
 
 span.insecure {

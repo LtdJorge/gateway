@@ -13,6 +13,7 @@
 
 const PromiseRouter = require('express-promise-router');
 const fetch = require('node-fetch');
+const WebSocket = require('ws');
 const Things = require('../models/things');
 
 const NewThingsController = PromiseRouter();
@@ -20,10 +21,10 @@ const NewThingsController = PromiseRouter();
 /**
  * Handle GET requests to /new_things
  */
-NewThingsController.get('/', function(request, response) {
-  Things.getNewThings().then(function(newThings) {
+NewThingsController.get('/', (request, response) => {
+  Things.getNewThings().then((newThings) => {
     response.json(newThings);
-  }).catch(function(error) {
+  }).catch((error) => {
     console.error(`Error getting a list of new things from adapters ${error}`);
     response.status(500).send(error);
   });
@@ -32,17 +33,22 @@ NewThingsController.get('/', function(request, response) {
 /**
  * Handle a WebSocket request on /new_things
  */
-NewThingsController.ws('/', function(websocket) {
+NewThingsController.ws('/', (websocket) => {
+  // Since the Gateway have the asynchronous express middlewares, there is a
+  // possibility that the WebSocket have been closed.
+  if (websocket.readyState !== WebSocket.OPEN) {
+    return;
+  }
   console.log('Opened a new things socket');
   // Register the WebSocket with the Things model so new devices can be pushed
   // to the client as they are added.
   Things.registerWebsocket(websocket);
   // Send a list of things the adapter manager already knows about
   Things.getNewThings().then(function(newThings) {
-    newThings.forEach(function(newThing) {
+    newThings.forEach((newThing) => {
       websocket.send(JSON.stringify(newThing));
     }, this);
-  }).catch(function(error) {
+  }).catch((error) => {
     console.error(`Error getting a list of new things from adapters ${error}`);
   });
 });
@@ -51,7 +57,7 @@ NewThingsController.ws('/', function(websocket) {
  * Handle POST requests to /new_things
  */
 NewThingsController.post('/', async (request, response) => {
-  if (!request.body || !request.body.url) {
+  if (!request.body || !request.body.hasOwnProperty('url')) {
     response.status(400).send('No URL in thing description');
     return;
   }
@@ -68,9 +74,11 @@ NewThingsController.post('/', async (request, response) => {
     const description = await res.json();
 
     // Verify some high level thing description properties.
-    if (description.hasOwnProperty('name') &&
-        description.hasOwnProperty('type') &&
-        description.hasOwnProperty('properties')) {
+    if ((description.hasOwnProperty('title') ||
+         description.hasOwnProperty('name')) &&  // backwards compat
+        (description.hasOwnProperty('properties') ||
+         description.hasOwnProperty('actions') ||
+         description.hasOwnProperty('events'))) {
       response.json(description);
     } else if (Array.isArray(description)) {
       response.status(400).send('Web things must be added individually');

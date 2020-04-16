@@ -8,8 +8,8 @@
 
 'use strict';
 
-const User = require('./user.js');
-const Database = require('../db.js');
+const User = require('./user');
+const Database = require('../db');
 
 const Users = {
   /**
@@ -19,18 +19,22 @@ const Users = {
    * @return {Promise} Promise which resolves to user object
    *   or false if user doesn't exist.
    */
-  getUser: function(email) {
-    return Database.getUser(email).then((result) => {
-      if (!result) {
-        return false;
-      }
-      return new User(result.id, result.email, result.password, result.name);
-    });
-  },
+  getUser: (email) => Database.getUser(email).then((result) => {
+    if (!result) {
+      return false;
+    }
+    return new User(
+      result.id,
+      result.email,
+      result.password,
+      result.name,
+      result.mfaSharedSecret,
+      result.mfaEnrolled,
+      result.mfaBackupCodes
+    );
+  }),
 
-  getCount: function() {
-    return Database.getUserCount();
-  },
+  getCount: () => Database.getUserCount(),
 
   /**
    * Get a user from the database.
@@ -39,7 +43,7 @@ const Users = {
    * @return {Promise} Promise which resolves to user object
    *   or false if user doesn't exist.
    */
-  getUserById: async function(id) {
+  getUserById: async (id) => {
     if (typeof id !== 'number') {
       id = parseInt(id, 10);
       if (isNaN(id)) {
@@ -51,20 +55,34 @@ const Users = {
     if (!row) {
       return row;
     }
-    return new User(row.id, row.email, row.password, row.name);
+    return new User(
+      row.id,
+      row.email,
+      row.password,
+      row.name,
+      row.mfaSharedSecret,
+      row.mfaEnrolled,
+      row.mfaBackupCodes
+    );
   },
 
   /**
    * Get all Users stored in the database
    * @return {Promise<Array<User>>}
    */
-  getUsers: function() {
-    return Database.getUsers().then((userRows) => {
-      return userRows.map((row) => {
-        return new User(row.id, row.email, row.password, row.name);
-      });
+  getUsers: () => Database.getUsers().then((userRows) => {
+    return userRows.map((row) => {
+      return new User(
+        row.id,
+        row.email,
+        row.password,
+        row.name,
+        row.mfaSharedSecret,
+        row.mfaEnrolled,
+        row.mfaBackupCodes
+      );
     });
-  },
+  }),
 
   /**
    * Create a new User
@@ -73,8 +91,9 @@ const Users = {
    * @param {String?} name - optional name of user
    * @return {User} user object.
    */
-  createUser: async function(email, password, name) {
-    const user = new User(null, email.toLowerCase(), password, name);
+  createUser: async (email, password, name) => {
+    const user =
+      new User(null, email.toLowerCase(), password, name, '', false, '');
     user.id = await Database.createUser(user);
     return user;
   },
@@ -84,7 +103,7 @@ const Users = {
    * @param {User} user to edit
    * @return {Promise} Promise which resolves when operation is complete.
    */
-  editUser: async function(user) {
+  editUser: async (user) => {
     user.email = user.email.toLowerCase();
     await Database.editUser(user);
   },
@@ -94,7 +113,7 @@ const Users = {
    * @param {Number} userId
    * @return {Promise} Promise which resolves when operation is complete.
    */
-  deleteUser: async function(userId) {
+  deleteUser: async (userId) => {
     if (typeof userId !== 'number') {
       userId = parseInt(userId, 10);
       if (isNaN(userId)) {

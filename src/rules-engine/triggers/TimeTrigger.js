@@ -1,8 +1,10 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+
+'use strict';
 
 const Events = require('../Events');
 const Trigger = require('./Trigger');
@@ -12,9 +14,11 @@ const Trigger = require('./Trigger');
  */
 class TimeTrigger extends Trigger {
   constructor(desc) {
-    super();
+    super(desc);
     this.time = desc.time;
-    this.sendStateChanged = this.sendStateChanged.bind(this);
+    this.localized = !!desc.localized;
+    this.sendOn = this.sendOn.bind(this);
+    this.sendOff = this.sendOff.bind(this);
   }
 
   /**
@@ -23,7 +27,7 @@ class TimeTrigger extends Trigger {
   toDescription() {
     return Object.assign(
       super.toDescription(),
-      {time: this.time}
+      {time: this.time, localized: this.localized}
     );
   }
 
@@ -36,9 +40,9 @@ class TimeTrigger extends Trigger {
     const hours = parseInt(parts[0], 10);
     const minutes = parseInt(parts[1], 10);
 
-    // Time is specified in UTC
+    // Time is specified in local time
     const nextTime = new Date();
-    nextTime.setUTCHours(hours, minutes, 0, 0);
+    nextTime.setHours(hours, minutes, 0, 0);
 
     if (nextTime.getTime() < Date.now()) {
       // NB: this will wrap properly into the next month/year
@@ -48,12 +52,16 @@ class TimeTrigger extends Trigger {
     if (this.timeout) {
       clearTimeout(this.timeout);
     }
-    this.timeout = setTimeout(this.sendStateChanged,
-                              nextTime.getTime() - Date.now());
+    this.timeout = setTimeout(this.sendOn, nextTime.getTime() - Date.now());
   }
 
-  sendStateChanged() {
+  sendOn() {
     this.emit(Events.STATE_CHANGED, {on: true, value: Date.now()});
+    this.timeout = setTimeout(this.sendOff, 60 * 1000);
+  }
+
+  sendOff() {
+    this.emit(Events.STATE_CHANGED, {on: false, value: Date.now()});
     this.scheduleNext();
   }
 

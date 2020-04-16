@@ -49,7 +49,7 @@ class Actions extends EventEmitter {
    * @returns {integer} An id.
    */
   generateId() {
-    return ++this.nextId;
+    return `${++this.nextId}`;
   }
 
   /**
@@ -77,9 +77,15 @@ class Actions extends EventEmitter {
    * Get only the actions which are not associated with a specific thing and
    * therefore belong to the root Gateway
    */
-  getGatewayActions() {
+  getGatewayActions(actionName) {
     return this.getAll().filter((action) => {
       return !action.thingId;
+    }).filter((action) => {
+      if (actionName) {
+        return actionName === action.name;
+      }
+
+      return true;
     }).map((action) => {
       return {[action.name]: action.getDescription()};
     });
@@ -89,9 +95,15 @@ class Actions extends EventEmitter {
   /**
    * Get only the actions which are associated with a specific thing
    */
-  getByThing(thingId) {
+  getByThing(thingId, actionName) {
     return this.getAll().filter((action) => {
       return action.thingId === thingId;
+    }).filter((action) => {
+      if (actionName) {
+        return actionName === action.name;
+      }
+
+      return true;
     }).map((action) => {
       return {[action.name]: action.getDescription()};
     });
@@ -127,9 +139,9 @@ class Actions extends EventEmitter {
 
     switch (action.name) {
       case 'pair':
-        AddonManager.addNewThing(action.input.timeout).then(function() {
+        AddonManager.addNewThing(action.input.timeout).then(() => {
           action.updateStatus('completed');
-        }).catch(function(error) {
+        }).catch((error) => {
           action.error = error;
           action.updateStatus('error');
           console.error('Thing was not added');
@@ -138,18 +150,20 @@ class Actions extends EventEmitter {
         break;
       case 'unpair':
         if (action.input.id) {
-          AddonManager.removeThing(action.input.id)
-            .then(function(thingIdUnpaired) {
-              console.log('unpair: thing:', thingIdUnpaired, 'was unpaired');
-              Things.removeThing(thingIdUnpaired);
+          const _finally = () => {
+            console.log('unpair: thing:', action.input.id, 'was unpaired');
+            Things.removeThing(action.input.id).then(() => {
               action.updateStatus('completed');
-            }).catch(function(error) {
+            }).catch((error) => {
               action.error = error;
               action.updateStatus('error');
               console.error('unpair of thing:',
                             action.input.id, 'failed.');
               console.error(error);
             });
+          };
+
+          AddonManager.removeThing(action.input.id).then(_finally, _finally);
         } else {
           const msg = 'unpair missing "id" parameter.';
           action.error = msg;
@@ -160,7 +174,8 @@ class Actions extends EventEmitter {
       default:
         delete this.actions[id];
         return Promise.reject(
-          new Error(`Invalid action name: "${action.name}"`));
+          new Error(`Invalid action name: "${action.name}"`)
+        );
     }
     return Promise.resolve();
   }
@@ -192,7 +207,7 @@ class Actions extends EventEmitter {
             throw `Invalid thing action name: "${action.name}"`;
           }
         }).catch((err) => {
-          console.error('Error removing thing action', err);
+          console.error('Error removing thing action:', err);
         });
       } else {
         switch (action.name) {

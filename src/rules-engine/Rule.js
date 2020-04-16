@@ -1,11 +1,16 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+
+'use strict';
+
 const effects = require('./effects');
 const triggers = require('./triggers');
 const Events = require('./Events');
+
+const DEBUG = false || (process.env.NODE_ENV === 'test');
 
 class Rule {
   /**
@@ -24,18 +29,24 @@ class Rule {
   /**
    * Begin executing the rule
    */
-  start() {
-    this.trigger.start();
+  async start() {
     this.trigger.on(Events.STATE_CHANGED, this.onTriggerStateChanged);
+    await this.trigger.start();
+    if (DEBUG) {
+      console.debug('Rule.start', this.name);
+    }
   }
 
   /**
-   * On a state changed event, pass the state forwawrd to the rule's effect
+   * On a state changed event, pass the state forward to the rule's effect
    * @param {State} state
    */
   onTriggerStateChanged(state) {
     if (!this.enabled) {
       return;
+    }
+    if (DEBUG) {
+      console.debug('Rule.onTriggerStateChanged', this.name, state);
     }
     this.effect.setState(state);
   }
@@ -65,6 +76,9 @@ class Rule {
     this.trigger.removeListener(Events.STATE_CHANGED,
                                 this.onTriggerStateChanged);
     this.trigger.stop();
+    if (DEBUG) {
+      console.debug('Rule.stop', this.name);
+    }
   }
 }
 
@@ -73,7 +87,7 @@ class Rule {
  * @param {RuleDescription} desc
  * @return {Rule}
  */
-Rule.fromDescription = function(desc) {
+Rule.fromDescription = (desc) => {
   const trigger = triggers.fromDescription(desc.trigger);
   const effect = effects.fromDescription(desc.effect);
   const rule = new Rule(desc.enabled, trigger, effect);

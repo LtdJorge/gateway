@@ -1,12 +1,17 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+
+'use strict';
 
 const effects = {
   Effect: require('./Effect'),
   ActionEffect: require('./ActionEffect'),
+  MultiEffect: require('./MultiEffect'),
+  NotificationEffect: require('./NotificationEffect'),
+  NotifierOutletEffect: require('./NotifierOutletEffect'),
   SetEffect: require('./SetEffect'),
   PulseEffect: require('./PulseEffect'),
 };

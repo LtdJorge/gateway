@@ -1,239 +1,392 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
 const API = require('../api');
-const TimeTriggerBlock = require('./TimeTriggerBlock');
+const App = require('../app');
+const RuleUtils = require('./RuleUtils');
+const Units = require('../units');
 
-/**
- * Model of a Rule loaded from the Rules Engine
- * @constructor
- * @param {Gateway} gateway - The remote gateway to which to talk
- * @param {RuleDescription?} desc - Description of the rule to load
- * @param {Function?} onUpdate - Listener for when update is called
- */
-function Rule(gateway, desc, onUpdate) {
-  this.gateway = gateway;
-  this.onUpdate = onUpdate;
+class Rule {
+  /**
+   * Model of a Rule loaded from the Rules Engine
+   * @constructor
+   * @param {Gateway} gateway - The remote gateway to which to talk
+   * @param {RuleDescription?} desc - Description of the rule to load
+   * @param {Function?} onUpdate - Listener for when update is called
+   */
+  constructor(gateway, desc, onUpdate) {
+    this.gateway = gateway;
+    this.onUpdate = onUpdate;
 
-  if (desc) {
-    this.id = desc.id;
-    this.enabled = desc.enabled;
-    if (desc.name) {
-      this.name = desc.name;
+    if (desc) {
+      this.id = desc.id;
+      this.enabled = desc.enabled;
+      if (desc.name) {
+        this.name = desc.name;
+      } else {
+        this.name = 'Rule Name';
+      }
+      this.trigger = desc.trigger;
+      this.effect = desc.effect;
     } else {
-      this.name = 'Rule Name';
+      this.enabled = true;
     }
-    this.trigger = desc.trigger;
-    this.effect = desc.effect;
-  } else {
-    this.enabled = true;
-  }
-}
-
-/**
- * Validate and save the rule
- * @return {Promise}
- */
-Rule.prototype.update = function() {
-  if (this.onUpdate) {
-    this.onUpdate();
-  }
-  const desc = this.toDescription();
-  if (!desc) {
-    return Promise.reject('invalid description');
   }
 
-  const fetchOptions = {
-    headers: API.headers(),
-    method: 'PUT',
-    body: JSON.stringify(desc),
-  };
-  fetchOptions.headers['Content-Type'] = 'application/json';
+  /**
+   * Validate and save the rule
+   * @return {Promise}
+   */
+  update() {
+    if (this.onUpdate) {
+      this.onUpdate();
+    }
 
-  let request = null;
-  if (typeof this.id !== 'undefined') {
-    request = fetch(`/rules/${encodeURIComponent(this.id)}`, fetchOptions);
-  } else {
-    fetchOptions.method = 'POST';
-    request = fetch('/rules/', fetchOptions).then((res) => {
-      return res.json();
-    }).then((rule) => {
-      this.id = rule.id;
-    });
-  }
-  return request;
-};
+    const desc = this.toDescription();
+    if (!desc) {
+      return Promise.reject('invalid description');
+    }
 
-/**
- * Delete the rule
- * @return {Promise}
- */
-Rule.prototype.delete = function() {
-  const fetchOptions = {
-    headers: API.headers(),
-    method: 'DELETE',
-  };
-
-  if (typeof this.id === 'undefined') {
-    return;
+    let request = null;
+    if (typeof this.id !== 'undefined') {
+      request = API.updateRule(this.id, desc);
+    } else {
+      request = API.addRule(desc).then((rule) => {
+        this.id = rule.id;
+      });
+    }
+    return request;
   }
 
-  return fetch(`/rules/${encodeURIComponent(this.id)}`, fetchOptions);
-};
+  /**
+   * Delete the rule
+   * @return {Promise}
+   */
+  delete() {
+    if (typeof this.id === 'undefined') {
+      return;
+    }
 
-/**
- * Convert this rule into a serialized description
- * @return {RuleDescription?} description or null if not a valid rule
- */
-Rule.prototype.toDescription = function() {
-  if (!this.trigger || !this.effect) {
-    return null;
+    return API.deleteRule(this.id);
   }
-  return {
-    enabled: this.enabled,
-    name: this.name,
-    trigger: this.trigger,
-    effect: this.effect,
-  };
-};
 
-// Helper function for selecting the thing corresponding to a property
-const RuleUtils = {
-  byProperty: function byProperty(property) {
-    return function(option) {
-      const optProp = option.properties[property.name];
-      return optProp && (optProp.href === property.href);
+  /**
+   * Convert this rule into a serialized description
+   * @return {RuleDescription?} description or null if not a valid rule
+   */
+  toDescription() {
+    if (!this.trigger || !this.effect) {
+      return null;
+    }
+    return {
+      enabled: this.enabled,
+      name: this.name,
+      trigger: this.trigger,
+      effect: this.effect,
     };
-  },
-  byHref: function byHref(href) {
-    return function(thing) {
-      return thing.href === href;
-    };
-  },
-};
-
-/**
- * Convert the rule's trigger's description to a human-readable string
- * @return {String}
- */
-Rule.prototype.toTriggerHumanDescription = function() {
-  if (this.trigger.type === 'TimeTrigger') {
-    return `the time of day is ${
-      TimeTriggerBlock.utcToLocal(this.trigger.time)}`;
   }
 
-  if (this.trigger.type === 'EventTrigger') {
+  /**
+   * Convert a trigger's decsription to a human-readable string
+   * @param {Trigger} trigger
+   * @param {boolean} html - whether to generate an interface
+   * @return {String?}
+   */
+  singleTriggerToHumanRepresentation(trigger, html) {
+    if (!trigger) {
+      return null;
+    }
+
+    if (trigger.type === 'MultiTrigger') {
+      let triggerStr = '';
+      for (let i = 0; i < trigger.triggers.length; i++) {
+        if (i > 0) {
+          if (trigger.triggers.length > 2) {
+            triggerStr += ',';
+          }
+          triggerStr += ' ';
+          if (i === trigger.triggers.length - 1) {
+            if (html) {
+              const andSelected = trigger.op === 'AND' ? 'selected' : '';
+              const orSelected = trigger.op === 'OR' ? 'selected' : '';
+
+              const selectHTML = `
+                <span class="triangle-select-container">
+                  <select class="triangle-select rule-trigger-select">
+                    <option ${andSelected}>and</option>
+                    <option ${orSelected}>or</option>
+                  </select>
+                </span>
+              `;
+              triggerStr += selectHTML;
+            } else {
+              triggerStr += trigger.op === 'AND' ? 'and ' : 'or ';
+            }
+          }
+        }
+        const singleStr =
+          this.singleTriggerToHumanRepresentation(trigger.triggers[i], html);
+        if (!singleStr) {
+          return null;
+        }
+        triggerStr += singleStr;
+      }
+      return triggerStr;
+    }
+
+    if (trigger.type === 'TimeTrigger') {
+      const d = new Date();
+      const parts = trigger.time.split(':');
+      d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+      const formatted = d.toLocaleTimeString(
+        // eslint-disable-next-line no-undefined
+        App.LANGUAGE,
+        {
+          hour: '2-digit',    // only show hour and minute
+          minute: '2-digit',  // am/pm is added automatically
+        }
+      );
+      return `the time of day is ${formatted}`;
+    }
+
+    if (trigger.type === 'EventTrigger') {
+      const triggerThing = this.gateway.things.filter(
+        RuleUtils.byThing(trigger.thing)
+      )[0];
+      if (!triggerThing) {
+        return null;
+      }
+      return `${triggerThing.title} event "${trigger.label}" occurs`;
+    }
+
     const triggerThing = this.gateway.things.filter(
-      RuleUtils.byHref(this.trigger.thing.href)
+      RuleUtils.byProperty(trigger.property)
     )[0];
-    return `${triggerThing.name} event "${this.trigger.event}" occurs`;
-  }
-
-
-  const triggerThing = this.gateway.things.filter(
-    RuleUtils.byProperty(this.trigger.property)
-  )[0];
-
-  let triggerStr = `${triggerThing.name} `;
-  if (this.trigger.type === 'BooleanTrigger') {
-    triggerStr += 'is ';
-    if (!this.trigger.onValue) {
-      triggerStr += 'not ';
+    if (!triggerThing) {
+      return null;
     }
-    triggerStr += this.trigger.property.name;
-  } else if (this.trigger.type === 'LevelTrigger') {
-    triggerStr += `${this.trigger.property.name} is `;
-    if (this.trigger.levelType === 'LESS') {
-      triggerStr += 'less than ';
+
+    const triggerProp = triggerThing.properties[trigger.property.id];
+    if (!triggerProp) {
+      return null;
+    }
+
+    let convertedValue;
+    if (trigger.hasOwnProperty('value')) {
+      convertedValue = Units.convert(trigger.value, triggerProp.unit).value;
+    }
+
+    let triggerStr = `${triggerThing.title} `;
+    if (trigger.type === 'BooleanTrigger') {
+      triggerStr += 'is ';
+      if (!trigger.onValue) {
+        triggerStr += 'not ';
+      }
+
+      if (trigger.property.id === 'on' || triggerProp.name === 'on') {
+        triggerStr += 'on';
+      } else {
+        triggerStr += trigger.label;
+      }
+    } else if (trigger.type === 'LevelTrigger') {
+      triggerStr += `${trigger.label} is `;
+      if (trigger.levelType === 'LESS') {
+        triggerStr += 'less than ';
+      } else if (trigger.levelType === 'EQUAL') {
+        triggerStr += 'equal to ';
+      } else {
+        triggerStr += 'greater than ';
+      }
+      triggerStr += `${convertedValue}`;
+    } else if (trigger.type === 'EqualityTrigger') {
+      triggerStr += `${trigger.label} is ${convertedValue}`;
     } else {
-      triggerStr += 'greater than ';
+      console.error('Unknown trigger type', trigger);
+      return null;
     }
-    triggerStr += this.trigger.value;
-  } else {
-    console.error('Unknown trigger type', this.trigger);
-    return '???';
+
+    return triggerStr;
   }
 
-  return triggerStr;
-};
+  /**
+   * Convert an effect's description to a human-readable string
+   * @param {Effect} effect
+   * @return {String?}
+   */
+  singleEffectToHumanRepresentation(effect) {
+    if (!effect) {
+      return null;
+    }
+    if (effect.type === 'MultiEffect') {
+      let effectStr = '';
+      for (let i = 0; i < effect.effects.length; i++) {
+        if (i > 0) {
+          if (effect.effects.length > 2) {
+            effectStr += ',';
+          }
+          effectStr += ' ';
+          if (i === effect.effects.length - 1) {
+            effectStr += 'and ';
+          }
+        }
+        const singleStr =
+          this.singleEffectToHumanRepresentation(effect.effects[i]);
+        if (!singleStr) {
+          return null;
+        }
+        effectStr += singleStr;
+      }
+      return effectStr;
+    }
 
-/**
- * Convert the rule's effect's description to a human-readable string
- * @return {String}
- */
-Rule.prototype.toEffectHumanDescription = function() {
-  if (this.effect.type === 'ActionEffect') {
+    if (effect.type === 'NotificationEffect') {
+      return `send a browser notification`;
+    }
+    if (effect.type === 'NotifierOutletEffect') {
+      const notifier = this.gateway.notifiers
+        .filter((notifier) => notifier.id === effect.notifier)[0];
+      if (!notifier) {
+        return null;
+      }
+      const outlet = notifier.outlets
+        .filter((outlet) => outlet.id === effect.outlet)[0];
+      if (!outlet) {
+        return null;
+      }
+      return `send a notification through ${outlet.name}`;
+    }
+    if (effect.type === 'ActionEffect') {
+      const effectThing = this.gateway.things.filter(
+        RuleUtils.byThing(effect.thing)
+      )[0];
+      if (!effectThing) {
+        return null;
+      }
+      return `do ${effectThing.title} action "${effect.label}"`;
+    }
+
     const effectThing = this.gateway.things.filter(
-      RuleUtils.byHref(this.effect.thing.href)
+      RuleUtils.byProperty(effect.property)
     )[0];
-    return `do ${effectThing.name} action "${this.effect.action}"`;
-  }
-
-  const effectThing = this.gateway.things.filter(
-    RuleUtils.byProperty(this.effect.property)
-  )[0];
-
-  let effectStr = '';
-  if (this.effect.property.name === 'on') {
-    effectStr = `turn ${effectThing.name} `;
-    if (this.effect.value) {
-      effectStr += 'on';
-    } else {
-      effectStr += 'off';
+    if (!effectThing) {
+      return null;
     }
-    if (this.effect.type === 'SET') {
-      effectStr += ' permanently';
+
+    const effectProp = effectThing.properties[effect.property.id];
+    if (!effectProp) {
+      return null;
+    }
+
+    let effectStr = '';
+    if (effectProp.name === 'on' || effect.property.id === 'on') {
+      effectStr = `turn ${effectThing.title} `;
+      if (effect.value) {
+        effectStr += 'on';
+      } else {
+        effectStr += 'off';
+      }
+    } else {
+      effectStr += `set ${effectThing.title} ${effect.label} to `;
+      effectStr += `${Units.convert(effect.value, effectProp.unit).value}`;
     }
     return effectStr;
   }
-  if (this.effect.type === 'SET') {
-    effectStr += 'set ';
-  } else {
-    effectStr += 'pulse ';
+
+  /**
+   * Convert the rule's description to human-readable plain text
+   * @return {String}
+   */
+  toHumanDescription() {
+    return this.toHumanRepresentation(false);
   }
 
-  effectStr += `${effectThing.name} ${this.effect.property.name} to `;
-  effectStr += this.effect.value;
-
-  return effectStr;
-};
-
-/**
- * Convert the rule's description to a human-readable string
- * @return {String}
- */
-Rule.prototype.toHumanDescription = function() {
-  let triggerStr = '???';
-  let effectStr = '???';
-
-  if (this.trigger) {
-    triggerStr = this.toTriggerHumanDescription();
+  /**
+   * Convert the rule's description to a human-readable interface
+   * @return {String}
+   */
+  toHumanInterface() {
+    return this.toHumanRepresentation(true);
   }
-  if (this.effect) {
-    effectStr = this.toEffectHumanDescription();
+
+  /**
+   * Convert the rule's description to a human-readable string
+   * @param {boolean} html - whether an html interface
+   * @return {String}
+   */
+  toHumanRepresentation(html) {
+    let triggerStr = '???';
+    let effectStr = '???';
+
+    if (this.trigger) {
+      triggerStr =
+        this.singleTriggerToHumanRepresentation(this.trigger, html) ||
+        triggerStr;
+    }
+    if (this.effect) {
+      effectStr =
+        this.singleEffectToHumanRepresentation(this.effect) ||
+        effectStr;
+    }
+
+    const effectExists = this.effect && this.effect.effects &&
+      this.effect.effects.length > 0;
+    let permanent = true; // Default to permanent
+    if (effectExists) {
+      for (const effect of this.effect.effects) {
+        if (effect.type === 'SetEffect') {
+          permanent = true;
+          break;
+        }
+        if (effect.type === 'PulseEffect') {
+          permanent = false;
+          break;
+        }
+      }
+    }
+    let predicate = permanent ? 'If' : 'While';
+    if (html) {
+      const permSelected = permanent ? 'selected' : '';
+      const tempSelected = permanent ? '' : 'selected';
+      predicate = `<span class="triangle-select-container">
+        <select class="triangle-select rule-effect-select">
+          <option ${permSelected}>If</option>
+          <option ${tempSelected}>While</option>
+        </select>
+      </span>`;
+    }
+
+    return `${predicate} ${triggerStr}, ${effectStr}`;
   }
-  return `If ${triggerStr} then ${effectStr}`;
-};
 
-/**
- * Set the trigger of the Rule, updating the server model if valid
- * @return {Promise}
- */
-Rule.prototype.setTrigger = function(trigger) {
-  this.trigger = trigger;
-  return this.update();
-};
+  /**
+   * Set the trigger of the Rule, updating the server model if valid
+   * @return {Promise}
+   */
+  setTrigger(trigger) {
+    this.trigger = trigger;
+    return this.update();
+  }
 
-/**
- * Set the effect of the Rule, updating the server model if valid
- * @return {Promise}
- */
-Rule.prototype.setEffect = function(effect) {
-  this.effect = effect;
-  return this.update();
-};
+  /**
+   * Set the effect of the Rule, updating the server model if valid
+   * @return {Promise}
+   */
+  setEffect(effect) {
+    this.effect = effect;
+    return this.update();
+  }
 
-module.exports = {Rule, RuleUtils};
+  /**
+   * Whether the rule is a valid, functioning rule
+   * @return {boolean}
+   */
+  valid() {
+    return !!(this.singleTriggerToHumanRepresentation(this.trigger, false) &&
+      this.singleEffectToHumanRepresentation(this.effect, false));
+  }
+}
+
+module.exports = Rule;

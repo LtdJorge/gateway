@@ -2,9 +2,9 @@ const effects = require('../../rules-engine/effects');
 
 const pulseEffect = {
   property: {
-    name: 'on',
     type: 'boolean',
-    href: '/things/light1/properties/on',
+    thing: 'light1',
+    id: 'on',
   },
   type: 'PulseEffect',
   value: true,
@@ -12,9 +12,9 @@ const pulseEffect = {
 
 const setEffect = {
   property: {
-    name: 'temp',
     type: 'number',
-    href: '/things/thermostat/properties/temp',
+    thing: 'thermostat',
+    id: 'temp',
     unit: 'celsius',
     description: 'thermostat setpoint',
   },
@@ -22,7 +22,15 @@ const setEffect = {
   value: 30,
 };
 
-describe('effects', function() {
+const bothEffect = {
+  effects: [
+    pulseEffect,
+    setEffect,
+  ],
+  type: 'MultiEffect',
+};
+
+describe('effects', () => {
   it('should parse a PulseEffect', () => {
     const effect = effects.fromDescription(pulseEffect);
     expect(effect).toMatchObject(pulseEffect);
@@ -31,6 +39,11 @@ describe('effects', function() {
   it('should parse a SetEffect', () => {
     const effect = effects.fromDescription(setEffect);
     expect(effect).toMatchObject(setEffect);
+  });
+
+  it('should parse a MultiEffect', () => {
+    const effect = effects.fromDescription(bothEffect);
+    expect(effect).toMatchObject(bothEffect);
   });
 
   it('should reject an unknown effect type', () => {

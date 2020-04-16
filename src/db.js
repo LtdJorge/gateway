@@ -1,5 +1,5 @@
 /**
- * Things Gateway Database.
+ * WebThings Gateway Database.
  *
  * Stores a list of Things connected to the gateway.
  *
@@ -14,17 +14,15 @@ const config = require('config');
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const path = require('path');
-const Passwords = require('./passwords');
 const assert = require('assert');
-
-// Imported as a module so we use a relative path.
-const ThingsData = require('../static/things.json');
+const UserProfile = require('./user-profile');
 
 const TABLES = [
   'users',
   'jsonwebtokens',
   'things',
   'settings',
+  'pushSubscriptions',
 ];
 
 const DEBUG = false || (process.env.NODE_ENV === 'test');
@@ -46,21 +44,14 @@ const Database = {
 
     // Don't pull this from user-profile.js, because that would cause a
     // circular dependency.
-    let filename;
-    let exists = false;
-    if (process.env.NODE_ENV === 'test') {
-      filename = ':memory:';
-    } else {
-      filename = path.join(config.get('profileDir'), 'config', 'db.sqlite3');
+    const filename = path.join(UserProfile.configDir, 'db.sqlite3');
 
-      const removeBeforeOpen = config.get('database.removeBeforeOpen');
-
-      // Check if database already exists
-      exists = fs.existsSync(filename);
-      if (exists && removeBeforeOpen) {
-        fs.unlinkSync(filename);
-        exists = false;
-      }
+    // Check if database already exists
+    let exists = fs.existsSync(filename);
+    const removeBeforeOpen = config.get('database.removeBeforeOpen');
+    if (exists && removeBeforeOpen) {
+      fs.unlinkSync(filename);
+      exists = false;
     }
 
     console.log(exists ? 'Opening' : 'Creating', 'database:', filename);
@@ -93,7 +84,10 @@ const Database = {
       'id INTEGER PRIMARY KEY ASC,' +
       'email TEXT UNIQUE,' +
       'password TEXT,' +
-      'name TEXT' +
+      'name TEXT,' +
+      'mfaSharedSecret TEXT,' +
+      'mfaEnrolled BOOLEAN DEFAULT 0,' +
+      'mfaBackupCodes TEXT' +
     ');');
 
     /**
@@ -118,6 +112,11 @@ const Database = {
       'key TEXT PRIMARY KEY,' +
       'value TEXT' +
     ');');
+
+    this.db.run(`CREATE TABLE IF NOT EXISTS pushSubscriptions (
+      id INTEGER PRIMARY KEY,
+      subscription TEXT UNIQUE
+    );`);
   },
 
   /**
@@ -125,41 +124,20 @@ const Database = {
    */
   migrate: function() {
     this.db.run('DROP TABLE IF EXISTS jsonwebtoken_to_user');
+    this.db.run('ALTER TABLE users ADD COLUMN mfaSharedSecret TEXT', () => {});
+    this.db.run(
+      'ALTER TABLE users ADD COLUMN mfaEnrolled BOOLEAN DEFAULT 0',
+      () => {}
+    );
+    this.db.run('ALTER TABLE users ADD COLUMN mfaBackupCodes TEXT', () => {});
   },
 
   /**
    * Populate the database with default data.
    */
   populate: function() {
-    console.log('Populating database with default things...');
-    // Populate Things table
-    const insertSQL = this.db.prepare(
-      'INSERT INTO things (id, description) VALUES (?, ?)');
-    for (const thing of ThingsData) {
-      const thingId = thing.id;
-      delete thing.id;
-      insertSQL.run(thingId, JSON.stringify(thing));
-    }
-    insertSQL.finalize();
-
-    // Add default user if provided
-    const defaultUser = config.get('authentication.defaultUser');
-    if (defaultUser) {
-      const passwordHash = Passwords.hashSync(defaultUser.password);
-      this.db.run(
-        'INSERT INTO users (email, password, name) VALUES (?, ?, ?)',
-        [defaultUser.email.toLowerCase(), passwordHash, defaultUser.name],
-        function(error) {
-          if (error) {
-            console.error('Failed to save default user.');
-          } else {
-            console.log(`Saved default user ${defaultUser.email}`);
-          }
-        });
-    }
-
     // Add any settings provided.
-    const generateSettings = function(obj, baseKey) {
+    const generateSettings = (obj, baseKey) => {
       const settings = [];
 
       for (const key in obj) {
@@ -184,7 +162,7 @@ const Database = {
       this.db.run(
         'INSERT INTO settings (key, value) VALUES (?, ?)',
         [setting[0], setting[1]],
-        function(error) {
+        (error) => {
           if (error) {
             console.error(`Failed to insert setting ${
               setting[0]}`);
@@ -192,7 +170,8 @@ const Database = {
             console.log(`Saved setting ${setting[0]} = ${
               setting[1]}`);
           }
-        });
+        }
+      );
     }
   },
 
@@ -205,7 +184,7 @@ const Database = {
     return new Promise((function(resolve, reject) {
       this.db.all(
         'SELECT id, description FROM things',
-        (function(err, rows) {
+        ((err, rows) => {
           if (err) {
             reject(err);
           } else {
@@ -233,7 +212,7 @@ const Database = {
       db.run(
         'INSERT INTO things (id, description) VALUES (?, ?)',
         [id, JSON.stringify(description)],
-        function(error) {
+        (error) => {
           if (error) {
             reject(error);
           } else {
@@ -255,7 +234,7 @@ const Database = {
       db.run(
         'UPDATE things SET description=? WHERE id=?',
         [JSON.stringify(description), id],
-        function(error) {
+        (error) => {
           if (error) {
             reject(error);
           } else {
@@ -273,7 +252,7 @@ const Database = {
   removeThing: function(id) {
     return new Promise((function(resolve, reject) {
       const db = this.db;
-      db.run('DELETE FROM things WHERE id = ?', id, function(error) {
+      db.run('DELETE FROM things WHERE id = ?', id, (error) => {
         if (error) {
           reject(error);
         } else {
@@ -292,7 +271,7 @@ const Database = {
       db.get(
         'SELECT * FROM users WHERE email = ?',
         email,
-        function(error, row) {
+        (error, row) => {
           if (error) {
             reject(error);
           } else {
@@ -389,32 +368,23 @@ const Database = {
   },
 
   /**
-   * Get a list of add-on-related settings.
-   *
-   * @return {Promise<Array<Setting>>} resolves with a list of setting objects
-   */
-  getAddonSettings: async function() {
-    return new Promise((resolve, reject) => {
-      this.db.all('SELECT * FROM settings WHERE key LIKE "addons.%"',
-                  (err, rows) => {
-                    if (err) {
-                      reject(err);
-                    } else {
-                      resolve(rows);
-                    }
-                  });
-    });
-  },
-
-  /**
    * Create a user
    * @param {User} user
    * @return {Promise<User>}
    */
   createUser: async function(user) {
     const result = await this.run(
-      'INSERT INTO users (email, password, name) VALUES (?, ?, ?)',
-      [user.email, user.password, user.name]
+      'INSERT INTO users ' +
+      '(email, password, name, mfaSharedSecret, mfaEnrolled, mfaBackupCodes) ' +
+      'VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        user.email,
+        user.password,
+        user.name,
+        user.mfaSharedSecret,
+        user.mfaEnrolled,
+        JSON.stringify(user.mfaBackupCodes || '[]'),
+      ]
     );
     assert(typeof result.lastID === 'number');
     return result.lastID;
@@ -428,8 +398,18 @@ const Database = {
   editUser: async function(user) {
     assert(typeof user.id === 'number');
     return this.run(
-      'UPDATE users SET email=?, password=?, name=? WHERE id=?',
-      [user.email, user.password, user.name, user.id]
+      'UPDATE users SET ' +
+      'email=?, password=?, name=?, mfaSharedSecret=?, mfaEnrolled=?, ' +
+      'mfaBackupCodes=? WHERE id=?',
+      [
+        user.email,
+        user.password,
+        user.name,
+        user.mfaSharedSecret,
+        user.mfaEnrolled,
+        JSON.stringify(user.mfaBackupCodes || '[]'),
+        user.id,
+      ]
     );
   },
 
@@ -527,6 +507,71 @@ const Database = {
   },
 
   /**
+   * Store a new Push subscription
+   * @param {Object} subscription
+   * @return {Promise<number>} resolves to sub id
+   */
+  createPushSubscription: function(desc) {
+    const description = JSON.stringify(desc);
+
+    const insert = () => {
+      return this.run(
+        'INSERT INTO pushSubscriptions (subscription) VALUES (?)',
+        [description]
+      ).then((res) => {
+        return parseInt(res.lastID);
+      });
+    };
+
+    return this.get(
+      'SELECT id FROM pushSubscriptions WHERE subscription = ?',
+      description
+    ).then((res) => {
+      if (typeof res === 'undefined') {
+        return insert();
+      }
+
+      return res.id;
+    }).catch(() => {
+      return insert();
+    });
+  },
+
+  /**
+   * Get all push subscriptions
+   * @return {Promise<Array<PushSubscription>>}
+   */
+  getPushSubscriptions: function() {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT id, subscription FROM pushSubscriptions',
+        [],
+        (err, rows) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          const subs = [];
+          for (const row of rows) {
+            const sub = JSON.parse(row.subscription);
+            sub.id = row.id;
+            subs.push(sub);
+          }
+          resolve(subs);
+        }
+      );
+    });
+  },
+
+  /**
+   * Delete a single subscription
+   * @param {number} id
+   */
+  deletePushSubscription: function(id) {
+    return this.run('DELETE FROM pushSubscriptions WHERE id = ?', [id]);
+  },
+
+  /**
    * ONLY for tests (clears all tables).
    */
   deleteEverything: async function() {
@@ -537,7 +582,7 @@ const Database = {
 
   get: function(sql, ...params) {
     return new Promise((accept, reject) => {
-      params.push(function(err, row) {
+      params.push((err, row) => {
         if (err) {
           reject(err);
           return;

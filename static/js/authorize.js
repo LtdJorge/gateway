@@ -1,15 +1,65 @@
 const API = require('./api');
+const fluent = require('./fluent');
 const Utils = require('./utils');
 
 document.addEventListener('DOMContentLoaded', () => {
-  const jwt = document.getElementById('jwt');
-  jwt.value = API.jwt;
+  fluent.load().then(() => {
+    fluent.init();
 
-  const scope = document.getElementById('authorize-scope');
-  init(scope.value);
+    const jwt = document.getElementById('jwt');
+    jwt.value = API.jwt;
+
+    const scope = document.getElementById('authorize-scope');
+    init(scope.value);
+
+    const backButton = document.getElementById('back-button');
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('client_id') || params.get('client_id') !== 'local-token') {
+      backButton.classList.add('hidden');
+    }
+  });
 });
 
 function init(scope) {
+  // promptMessage will be of the form:
+  //   "<<name>> would like to access your gateway to <<function>> devices."
+  // split that string on the <<name>> and <<function>> parts and insert the
+  // existing nodes in the right places.
+  const authorizeInfo = document.getElementById('authorize-info');
+  const authorizeName = document.getElementById('authorize-name');
+  const authorizeFunction = document.getElementById('authorize-function');
+  const promptMessage = fluent.getMessage('authorize-prompt');
+
+  let node1, node2;
+  if (promptMessage.indexOf('<<function>>') <
+      promptMessage.indexOf('<<name>>')) {
+    authorizeInfo.insertBefore(authorizeFunction, authorizeName);
+    node1 = authorizeFunction;
+    node2 = authorizeName;
+  } else {
+    node1 = authorizeName;
+    node2 = authorizeFunction;
+  }
+
+  const promptParts = promptMessage.split(/<<\w+>>/g);
+  authorizeInfo.insertBefore(document.createTextNode(promptParts[0]), node1);
+  authorizeInfo.insertBefore(document.createTextNode(promptParts[1]), node2);
+  authorizeInfo.appendChild(document.createTextNode(promptParts[2]));
+
+  // sourceMessage will be of the form:
+  //   "from <<domain>>".
+  // split that string on the <<domain>> part and insert the existing domain
+  // node in the right place.
+  const authorizeSubInfo = document.getElementById('authorize-sub-info');
+  const authorizeDomain = document.getElementById('authorize-domain');
+  const sourceMessage = fluent.getMessage('authorize-source');
+  const sourceParts = sourceMessage.split('<<domain>>');
+  authorizeSubInfo.insertBefore(
+    document.createTextNode(sourceParts[0]),
+    authorizeDomain
+  );
+  authorizeSubInfo.appendChild(document.createTextNode(sourceParts[1]));
+
   const readWrite = scope.indexOf(':readwrite') >= 0;
   const authorizeReadWrite = document.getElementById('authorize-readwrite');
   const authorizeRead = document.getElementById('authorize-read');
@@ -30,11 +80,7 @@ function init(scope) {
     authorizeAllThings.setAttribute('checked', '');
   }
 
-  fetch('/things', {
-    headers: API.headers(),
-  }).then((res) => {
-    return res.json();
-  }).then((things) => {
+  API.getThings().then((things) => {
     let checkboxIndex = 0;
     for (const thing of things) {
       const included = global || (scope.indexOf(thing.href) >= 0);
@@ -47,7 +93,7 @@ function init(scope) {
           type="checkbox" ${included ? 'checked' : ''}
           ${global ? 'disabled' : ''}/>
         <label for="authorize-thing-included-${checkboxIndex}">
-          ${Utils.escapeHtml(thing.name)}
+          ${Utils.escapeHtml(thing.title)}
         </label>`;
       checkboxIndex += 1;
 
@@ -55,8 +101,7 @@ function init(scope) {
     }
   });
 
-
-  authorizeAllThings.addEventListener('change', function() {
+  authorizeAllThings.addEventListener('change', () => {
     const authorizeThings = document.querySelectorAll('.authorize-thing');
     for (const thingElt of authorizeThings) {
       const checkbox = thingElt.querySelector('.authorize-thing-included');
@@ -69,7 +114,7 @@ function init(scope) {
     }
   });
 
-  authorizeButton.addEventListener('click', function() {
+  authorizeButton.addEventListener('click', () => {
     let readWrite = 'read';
     if (authorizeReadWrite.selected) {
       readWrite = 'readwrite';

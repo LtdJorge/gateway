@@ -3,12 +3,13 @@
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
 'use strict';
 
 const {Adapter, Device, Property} = require('gateway-addon');
+const express = require('express');
 
 class MockProperty extends Property {
   constructor(device, name, propertyDescription) {
@@ -28,9 +29,12 @@ class MockProperty extends Property {
    */
   setValue(value) {
     return new Promise((resolve, reject) => {
+      if (/^rejectProperty/.test(this.name)) {
+        reject('Read-only property');
+        return;
+      }
       super.setValue(value).then((updatedValue) => {
         resolve(updatedValue);
-        this.device.notifyPropertyChanged(this);
       }).catch((err) => {
         reject(err);
       });
@@ -41,9 +45,11 @@ class MockProperty extends Property {
 class MockDevice extends Device {
   constructor(adapter, id, deviceDescription) {
     super(adapter, id);
-    this.name = deviceDescription.name;
-    this.type = deviceDescription.type;
+    this.title = deviceDescription.title;
+    this['@context'] = deviceDescription['@context'];
+    this['@type'] = deviceDescription['@type'];
     this.description = deviceDescription.description;
+    this.baseHref = `http://127.0.0.1:${adapter.port}`;
     for (const propertyName in deviceDescription.properties) {
       const propertyDescription = deviceDescription.properties[propertyName];
       const property =
@@ -87,6 +93,13 @@ class MockAdapter extends Adapter {
   constructor(addonManager, packageName) {
     super(addonManager, packageName, packageName);
     addonManager.addAdapter(this);
+
+    this.port = 12345;
+    this.app = express();
+    this.app.all('/*', (req, rsp) => {
+      rsp.send(`${req.method} ${req.path}`);
+    });
+    this.server = this.app.listen(this.port);
   }
 
   /**
@@ -150,7 +163,7 @@ class MockAdapter extends Adapter {
 
   // eslint-disable-next-line no-unused-vars
   startPairing(timeoutSeconds) {
-    console.log('MockAdapter:', this.name, 'id', this.id, 'pairing started');
+    console.log('MockAdapter:', this.title, 'id', this.id, 'pairing started');
     if (this.pairDeviceId) {
       const deviceId = this.pairDeviceId;
       const deviceDescription = this.pairDeviceDescription;
@@ -166,12 +179,12 @@ class MockAdapter extends Adapter {
   }
 
   cancelPairing() {
-    console.log('MockAdapter:', this.name, 'id', this.id,
+    console.log('MockAdapter:', this.title, 'id', this.id,
                 'pairing cancelled');
   }
 
   removeThing(device) {
-    console.log('MockAdapter:', this.name, 'id', this.id,
+    console.log('MockAdapter:', this.title, 'id', this.id,
                 'removeThing(', device.id, ') started');
 
     this.removeDevice(device.id).then(() => {
@@ -183,8 +196,33 @@ class MockAdapter extends Adapter {
   }
 
   cancelRemoveThing(device) {
-    console.log('MockAdapter:', this.name, 'id', this.id,
+    console.log('MockAdapter:', this.title, 'id', this.id,
                 'cancelRemoveThing(', device.id, ')');
+  }
+
+  setPin(deviceId, pin) {
+    return new Promise((resolve, reject) => {
+      if (pin === '1234') {
+        resolve();
+      } else {
+        reject();
+      }
+    });
+  }
+
+  setCredentials(deviceId, username, password) {
+    return new Promise((resolve, reject) => {
+      if (username === 'test-user' && password === 'Password-1234!') {
+        resolve();
+      } else {
+        reject();
+      }
+    });
+  }
+
+  unload() {
+    this.server.close();
+    return super.unload();
   }
 }
 

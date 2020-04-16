@@ -20,6 +20,9 @@ if (API.isLoggedIn()) {
         document.body.classList.remove('hidden');
       });
     }
+  }).catch(() => {
+    document.body.classList.remove('hidden');
+    document.getElementById('connectivity-scrim').classList.remove('hidden');
   });
 } else {
   redirectUnauthed();
@@ -29,14 +32,13 @@ function redirectUnauthed() {
   API.userCount().then((count) => {
     let url;
     if (count > 0) {
-      const redirectPath = window.location.pathname + window.location.search;
-      url = `/login/?url=${encodeURIComponent(redirectPath)}`;
+      url = `/login/`;
     } else {
       url = '/signup/';
     }
 
-    if (window.location.pathname !== url.split('?')[0]) {
-      window.location.href = url;
+    if (window.location.pathname !== url) {
+      window.location.replace(url);
     }
   });
 }

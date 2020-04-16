@@ -1,22 +1,19 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+'use strict';
+
 const PromiseRouter = require('express-promise-router');
-const Settings = require('../models/settings');
 
 const APIError = require('./APIError');
 const Database = require('./Database');
 const Engine = require('./Engine');
-const JSONWebToken = require('../models/jsonwebtoken');
 const Rule = require('./Rule');
 
 const index = PromiseRouter();
-
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
 const engine = new Engine();
 
 /**
@@ -46,7 +43,7 @@ function parseRuleFromBody(req, res, next) {
   next();
 }
 
-index.get('/', async function(req, res) {
+index.get('/', async (req, res) => {
   const rules = await engine.getRules();
   res.send(rules.map((rule) => {
     return rule.toDescription();
@@ -54,7 +51,7 @@ index.get('/', async function(req, res) {
 });
 
 
-index.get('/:id', async function(req, res) {
+index.get('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const rule = await engine.getRule(id);
@@ -65,12 +62,12 @@ index.get('/:id', async function(req, res) {
   }
 });
 
-index.post('/', parseRuleFromBody, async function(req, res) {
+index.post('/', parseRuleFromBody, async (req, res) => {
   const ruleId = await engine.addRule(req.rule);
   res.send({id: ruleId});
 });
 
-index.put('/:id', parseRuleFromBody, async function(req, res) {
+index.put('/:id', parseRuleFromBody, async (req, res) => {
   try {
     await engine.updateRule(parseInt(req.params.id), req.rule);
     res.send({});
@@ -80,7 +77,7 @@ index.put('/:id', parseRuleFromBody, async function(req, res) {
   }
 });
 
-index.delete('/:id', async function(req, res) {
+index.delete('/:id', async (req, res) => {
   try {
     await engine.deleteRule(req.params.id);
     res.send({});
@@ -90,10 +87,7 @@ index.delete('/:id', async function(req, res) {
   }
 });
 
-index.configure = async function(gatewayHref) {
-  await Settings.set('RulesEngine.gateway', gatewayHref);
-  await Settings.set('RulesEngine.jwt', await JSONWebToken.issueToken(-1));
-
+index.configure = async () => {
   await Database.open();
   await engine.getRules();
 };

@@ -8,6 +8,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+
+'use strict';
+
 const Constants = require('./constants');
 const JSONWebToken = require('./models/jsonwebtoken');
 
@@ -73,7 +76,14 @@ function scopeAllowsRequest(scope, request) {
     const access = parts[1];
     const readwrite = access === Constants.READWRITE;
     path = parts[0];
-    if (requestPath.startsWith(path)) {
+    const allowedDirect = requestPath.startsWith(path);
+    const allowedThings = requestPath === Constants.THINGS_PATH &&
+      path.startsWith(Constants.THINGS_PATH);
+    // Allow access to media only if scope covers all things
+    const allowedMedia = requestPath.startsWith(Constants.MEDIA_PATH) &&
+      path === Constants.THINGS_PATH;
+
+    if (allowedDirect || allowedThings || allowedMedia) {
       if (!readwrite && request.method !== 'GET' &&
           request.method !== 'OPTIONS') {
         return false;

@@ -9,9 +9,9 @@
 
 'use strict';
 
-const Constants = require('../constants');
 const Deferred = require('../deferred');
 const {Property} = require('gateway-addon');
+const {MessageType} = require('gateway-addon').Constants;
 
 class PropertyProxy extends Property {
   constructor(device, propertyName, propertyDict) {
@@ -20,7 +20,7 @@ class PropertyProxy extends Property {
     this.value = propertyDict.value;
 
     this.propertyChangedPromises = [];
-    this.propertyDict = {};
+    this.propertyDict = Object.assign({}, propertyDict);
   }
 
   asDict() {
@@ -46,6 +46,36 @@ class PropertyProxy extends Property {
   doPropertyChanged(propertyDict) {
     this.propertyDict = Object.assign({}, propertyDict);
     this.setCachedValue(propertyDict.value);
+    if (propertyDict.hasOwnProperty('title')) {
+      this.title = propertyDict.title;
+    }
+    if (propertyDict.hasOwnProperty('type')) {
+      this.type = propertyDict.type;
+    }
+    if (propertyDict.hasOwnProperty('@type')) {
+      this['@type'] = propertyDict['@type'];
+    }
+    if (propertyDict.hasOwnProperty('unit')) {
+      this.unit = propertyDict.unit;
+    }
+    if (propertyDict.hasOwnProperty('description')) {
+      this.description = propertyDict.description;
+    }
+    if (propertyDict.hasOwnProperty('minimum')) {
+      this.minimum = propertyDict.minimum;
+    }
+    if (propertyDict.hasOwnProperty('maximum')) {
+      this.maximum = propertyDict.maximum;
+    }
+    if (propertyDict.hasOwnProperty('multipleOf')) {
+      this.multipleOf = propertyDict.multipleOf;
+    }
+    if (propertyDict.hasOwnProperty('enum')) {
+      this.enum = propertyDict.enum;
+    }
+    if (propertyDict.hasOwnProperty('links')) {
+      this.links = propertyDict.links;
+    }
     while (this.propertyChangedPromises.length > 0) {
       const deferredChange = this.propertyChangedPromises.pop();
       deferredChange.resolve(propertyDict.value);
@@ -60,16 +90,14 @@ class PropertyProxy extends Property {
    */
   setValue(value) {
     return new Promise((resolve, reject) => {
-      console.log('PropertyProxy: setProperty property:', this.name,
-                  'for:', this.device.id,
-                  'to value:', value);
-
       this.device.adapter.sendMsg(
-        Constants.SET_PROPERTY, {
+        MessageType.DEVICE_SET_PROPERTY_COMMAND,
+        {
           deviceId: this.device.id,
           propertyName: this.name,
           propertyValue: value,
-        });
+        }
+      );
 
       // TODO: Add a timeout
 

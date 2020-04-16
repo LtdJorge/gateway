@@ -1,7 +1,5 @@
 'use strict';
 
-/* globals it */
-
 const config = require('config');
 const nock = require('nock');
 const {URL} = require('url');
@@ -39,7 +37,7 @@ const releases = [
 
 const updateUrl = new URL(config.get('updateUrl'));
 
-describe('updates/', function() {
+describe('updates/', () => {
   let jwt;
   beforeEach(async () => {
     jwt = await createUser(server, TEST_USER);

@@ -2,10 +2,9 @@ const triggers = require('../../rules-engine/triggers');
 
 const booleanTrigger = {
   property: {
-    name: 'on',
     type: 'boolean',
-    href:
-      '/things/light1/properties/on',
+    thing: 'light1',
+    id: 'on',
   },
   type: 'BooleanTrigger',
   onValue: true,
@@ -13,17 +12,36 @@ const booleanTrigger = {
 
 const levelTrigger = {
   property: {
-    name: 'hue',
     type: 'number',
-    href:
-      '/things/light2/properties/hue',
+    thing: 'light2',
+    id: 'hue',
   },
   type: 'LevelTrigger',
   levelType: 'LESS',
   value: 120,
 };
 
-describe('triggers', function() {
+const equalityTrigger = {
+  property: {
+    type: 'string',
+    thing: 'light2',
+    id: 'color',
+  },
+  type: 'EqualityTrigger',
+  value: '#ff7700',
+};
+
+const andTrigger = {
+  triggers: [
+    booleanTrigger,
+    levelTrigger,
+  ],
+  type: 'MultiTrigger',
+  op: 'AND',
+};
+
+
+describe('triggers', () => {
   it('should parse a BooleanTrigger', () => {
     const trigger = triggers.fromDescription(booleanTrigger);
     expect(trigger).toMatchObject(booleanTrigger);
@@ -32,6 +50,16 @@ describe('triggers', function() {
   it('should parse a LevelTrigger', () => {
     const trigger = triggers.fromDescription(levelTrigger);
     expect(trigger).toMatchObject(levelTrigger);
+  });
+
+  it('should parse an EqualityTrigger', () => {
+    const trigger = triggers.fromDescription(equalityTrigger);
+    expect(trigger).toMatchObject(equalityTrigger);
+  });
+
+  it('should parse a MultiTrigger', () => {
+    const trigger = triggers.fromDescription(andTrigger);
+    expect(trigger).toMatchObject(andTrigger);
   });
 
   it('should reject an unknown trigger type', () => {

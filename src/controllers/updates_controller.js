@@ -1,34 +1,45 @@
+'use strict';
+
 const childProcess = require('child_process');
 const config = require('config');
 const fs = require('fs');
 const fetch = require('node-fetch');
 const semver = require('semver');
+const Platform = require('../platform');
 const PromiseRouter = require('express-promise-router');
+const Utils = require('../utils');
 
 const pkg = require('../../package.json');
 
 const UpdatesController = PromiseRouter();
 
 function readVersion(packagePath) {
-  return new Promise(function(resolve, reject) {
-    fs.readFile(packagePath, {encoding: 'utf8'}, function(err, data) {
+  return new Promise((resolve, reject) => {
+    fs.readFile(packagePath, {encoding: 'utf8'}, (err, data) => {
       if (err) {
         reject(err);
         return;
       }
-      const pkg = JSON.parse(data);
-      if (!semver.valid(pkg.version)) {
-        reject(new Error(`invalid gateway semver: ${pkg.version}`));
-        return;
+
+      try {
+        const pkgJson = JSON.parse(data);
+
+        if (!semver.valid(pkgJson.version)) {
+          reject(new Error(`Invalid gateway semver: ${pkgJson.version}`));
+          return;
+        }
+
+        resolve(pkgJson.version);
+      } catch (e) {
+        reject(e);
       }
-      resolve(pkg.version);
     });
   });
 }
 
 function stat(path) {
-  return new Promise(function(resolve, reject) {
-    fs.stat(path, function(err, stats) {
+  return new Promise((resolve, reject) => {
+    fs.stat(path, (err, stats) => {
       if (err) {
         if (err.code === 'ENOENT') {
           resolve(null);
@@ -58,7 +69,7 @@ function cacheLatestInsert(response, value) {
 /**
  * Send the client an object describing the latest release
  */
-UpdatesController.get('/latest', async function(request, response) {
+UpdatesController.get('/latest', async (request, response) => {
   const etag = request.get('If-None-Match');
   if (etag) {
     if (cacheLatest.tag === etag &&
@@ -70,7 +81,8 @@ UpdatesController.get('/latest', async function(request, response) {
 
   const res = await fetch(
     config.get('updateUrl'),
-    {headers: {'User-Agent': `mozilla-iot-gateway/${pkg.version}`}});
+    {headers: {'User-Agent': Utils.getGatewayUserAgent()}}
+  );
 
   const releases = await res.json();
   if (!releases || !releases.filter) {
@@ -99,32 +111,39 @@ UpdatesController.get('/latest', async function(request, response) {
 /**
  * Send an object describing the update status of the gateway
  */
-UpdatesController.get('/status', async function(request, response) {
+UpdatesController.get('/status', async (request, response) => {
   // gateway, gateway_failed, gateway_old
   // oldVersion -> gateway_old's package.json version
   // if (gateway_failed.version > thisversion) {
   //  update failed, last attempt was ctime of gateway_failed
   // }
-  const currentVersion = await readVersion('package.json');
+  const currentVersion = pkg.version;
+
   const oldStats = await stat('../gateway_old/package.json');
   let oldVersion = null;
+  if (oldStats) {
+    try {
+      oldVersion = await readVersion('../gateway_old/package.json');
+    } catch (e) {
+      console.error('Failed to read ../gateway_old/package.json:', e);
+    }
+  }
 
   const failedStats = await stat('../gateway_failed/package.json');
   let failedVersion = null;
-
-  if (oldStats) {
-    oldVersion = await readVersion('../gateway_old/package.json');
-  }
-
   if (failedStats) {
-    failedVersion = await readVersion('../gateway_failed/package.json');
+    try {
+      failedVersion = await readVersion('../gateway_failed/package.json');
+    } catch (e) {
+      console.error('Failed to read ../gateway_failed/package.json:', e);
+    }
   }
 
   if (failedVersion && semver.gt(failedVersion, currentVersion)) {
     response.send({
       success: false,
       version: currentVersion,
-      failedVersion: failedVersion,
+      failedVersion,
       timestamp: failedStats.ctime,
     });
   } else {
@@ -135,17 +154,46 @@ UpdatesController.get('/status', async function(request, response) {
     response.send({
       success: true,
       version: currentVersion,
-      oldVersion: oldVersion,
-      timestamp: timestamp,
+      oldVersion,
+      timestamp,
     });
   }
 });
 
-UpdatesController.post('/update', async function(request, response) {
+UpdatesController.post('/update', async (request, response) => {
   childProcess.exec('sudo systemctl start ' +
     'mozilla-iot-gateway.check-for-update.service');
 
-  response.end();
+  response.json({});
+});
+
+UpdatesController.get('/self-update', async (request, response) => {
+  if (!Platform.implemented('getSelfUpdateStatus')) {
+    response.json({
+      available: false,
+      enabled: false,
+    });
+  } else {
+    response.json(Platform.getSelfUpdateStatus());
+  }
+});
+
+UpdatesController.put('/self-update', async (request, response) => {
+  if (!request.body || !request.body.hasOwnProperty('enabled')) {
+    response.status(400).send('Enabled property not defined');
+    return;
+  }
+
+  if (!Platform.implemented('setSelfUpdateStatus')) {
+    response.status(500).send('Cannot toggle auto updates');
+    return;
+  }
+
+  if (Platform.setSelfUpdateStatus(request.body.enabled)) {
+    response.status(200).json({enabled: request.body.enabled});
+  } else {
+    response.status(500).send('Failed to toggle auto updates');
+  }
 });
 
 module.exports = UpdatesController;

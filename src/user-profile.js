@@ -1,5 +1,5 @@
 /**
- * Things Gateway user profile.
+ * WebThings Gateway user profile.
  *
  * The user profile lives outside of the source tree to allow for things like
  * data persistence with Docker, as well as the ability to easily switch
@@ -12,25 +12,27 @@
 
 'use strict';
 
+process.env.ALLOW_CONFIG_MUTATIONS = 'true';
 const config = require('config');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const mkdirp = require('mkdirp');
-const ncp = require('ncp');
+const {ncp} = require('ncp');
 const rimraf = require('rimraf');
-const db = require('./db');
-const Settings = require('./models/settings');
-const Users = require('./models/users');
 
 const Profile = {
   init: function() {
-    this.baseDir = config.get('profileDir');
+    this.baseDir = path.resolve(
+      process.env.MOZIOT_HOME || config.get('profileDir')
+    );
     this.configDir = path.join(this.baseDir, 'config');
+    this.dataDir = path.join(this.baseDir, 'data');
     this.sslDir = path.join(this.baseDir, 'ssl');
     this.uploadsDir = path.join(this.baseDir, 'uploads');
+    this.mediaDir = path.join(this.baseDir, 'media');
     this.logDir = path.join(this.baseDir, 'log');
-    this.gatewayDir = path.join(__dirname, '..');
+    this.gatewayDir = path.resolve(path.join(__dirname, '..'));
 
     if (process.env.NODE_ENV === 'test') {
       this.addonsDir = path.join(this.gatewayDir, 'src', 'addons-test');
@@ -42,7 +44,7 @@ const Profile = {
   /**
    * Manually copy, then unlink, to prevent issues with cross-device renames.
    */
-  renameFile: function(src, dst) {
+  renameFile: (src, dst) => {
     fs.copyFileSync(src, dst);
     fs.unlinkSync(src);
   },
@@ -50,25 +52,23 @@ const Profile = {
   /**
    * Manually copy, then remove, to prevent issues with cross-device renames.
    */
-  renameDir: function(src, dst) {
-    return new Promise((resolve, reject) => {
-      ncp(src, dst, (e) => {
-        if (e) {
-          reject(e);
+  renameDir: (src, dst) => new Promise((resolve, reject) => {
+    ncp(src, dst, (e) => {
+      if (e) {
+        reject(e);
+        return;
+      }
+
+      rimraf(src, (err) => {
+        if (err) {
+          reject(err);
           return;
         }
 
-        rimraf(src, (err) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-
-          resolve();
-        });
+        resolve();
       });
     });
-  },
+  }),
 
   /**
    * Migrate from old locations to new ones
@@ -79,6 +79,9 @@ const Profile = {
     // Create all required profile directories.
     if (!fs.existsSync(this.configDir)) {
       mkdirp.sync(this.configDir);
+    }
+    if (!fs.existsSync(this.dataDir)) {
+      mkdirp.sync(this.dataDir);
     }
     if (!fs.existsSync(this.sslDir)) {
       mkdirp.sync(this.sslDir);
@@ -100,37 +103,59 @@ const Profile = {
       this.renameFile(oldDbPath, dbPath);
     }
 
+    const db = require('./db');
+    const Settings = require('./models/settings');
+    const Users = require('./models/users');
+
     // Open the database.
     db.open();
 
     // Normalize user email addresses
-    Users.getUsers().then((users) => {
-      users.forEach((user) => {
-        // Call editUser with the same user, as it will normalize the email
-        // for us and save it.
-        Users.editUser(user);
-      });
-    });
+    pending.push(
+      Users.getUsers().then((users) => {
+        users.forEach((user) => {
+          // Call editUser with the same user, as it will normalize the email
+          // for us and save it.
+          Users.editUser(user);
+        });
+      })
+    );
 
     // Move the tunneltoken into the database.
     const ttPath = path.join(this.gatewayDir, 'tunneltoken');
     if (fs.existsSync(ttPath)) {
       const token = JSON.parse(fs.readFileSync(ttPath));
-      Settings.set('tunneltoken', token).then(() => {
-        fs.unlinkSync(ttPath);
-      }).catch((e) => {
-        throw e;
-      });
+      pending.push(
+        Settings.set('tunneltoken', token).then(() => {
+          fs.unlinkSync(ttPath);
+        }).catch((e) => {
+          throw e;
+        })
+      );
     }
 
     // Move the notunnel setting into the database.
     const ntPath = path.join(this.gatewayDir, 'notunnel');
     if (fs.existsSync(ntPath)) {
-      Settings.set('notunnel', true).then(() => {
-        fs.unlinkSync(ntPath);
-      }).catch((e) => {
-        throw e;
-      });
+      pending.push(
+        Settings.set('notunnel', true).then(() => {
+          fs.unlinkSync(ntPath);
+        }).catch((e) => {
+          throw e;
+        })
+      );
+    }
+
+    // Move the wifiskip setting into the database.
+    const wsPath = path.join(this.configDir, 'wifiskip');
+    if (fs.existsSync(wsPath)) {
+      pending.push(
+        Settings.set('wifiskip', true).then(() => {
+          fs.unlinkSync(wsPath);
+        }).catch((e) => {
+          throw e;
+        })
+      );
     }
 
     // Move certificates, if necessary.
@@ -168,7 +193,7 @@ const Profile = {
 
     const oldSslDir = path.join(this.gatewayDir, 'ssl');
     if (fs.existsSync(oldSslDir)) {
-      rimraf(oldSslDir, (err) => {
+      rimraf.sync(oldSslDir, (err) => {
         if (err) {
           throw err;
         }
@@ -178,7 +203,7 @@ const Profile = {
     // Move old uploads, if necessary.
     const oldUploadsDir = path.join(this.gatewayDir, 'static', 'uploads');
     if (fs.existsSync(oldUploadsDir) &&
-        fs.lstatSync(oldUploadsDir).isDirectory()) {
+      fs.lstatSync(oldUploadsDir).isDirectory()) {
       const fnames = fs.readdirSync(oldUploadsDir);
       for (const fname of fnames) {
         this.renameFile(
@@ -189,15 +214,55 @@ const Profile = {
     }
 
     // Create a user config if one doesn't exist.
-    const userConfigPath = path.join(this.configDir, 'local.js');
+    const oldUserConfigPath = path.join(this.configDir, 'local.js');
+    const oldLocalConfigPath = path.join(this.gatewayDir, 'config', 'local.js');
+    const userConfigPath = path.join(this.configDir, 'local.json');
+
     if (!fs.existsSync(userConfigPath)) {
-      fs.writeFileSync(
-        userConfigPath, '\'use strict\';\n\nmodule.exports = {\n};');
+      if (fs.existsSync(oldUserConfigPath)) {
+        const oldConfig = config.util.parseFile(oldUserConfigPath);
+        fs.writeFileSync(userConfigPath, JSON.stringify(oldConfig, null, 2));
+      } else {
+        fs.writeFileSync(userConfigPath, '{\n}');
+      }
     }
 
-    const localConfigPath = path.join(this.gatewayDir, 'config', 'local.js');
-    if (!fs.existsSync(localConfigPath)) {
-      fs.copyFileSync(userConfigPath, localConfigPath);
+    if (fs.existsSync(oldUserConfigPath)) {
+      fs.unlinkSync(oldUserConfigPath);
+    }
+
+    if (fs.existsSync(oldLocalConfigPath)) {
+      fs.unlinkSync(oldLocalConfigPath);
+    }
+
+    // Handle any config migrations
+    if (fs.existsSync(userConfigPath)) {
+      const cfg = JSON.parse(fs.readFileSync(userConfigPath));
+      let changed = false;
+
+      // addonManager.listUrl -> addonManager.listUrls
+      if (cfg.hasOwnProperty('addonManager') &&
+          cfg.addonManager.hasOwnProperty('listUrl')) {
+        if (cfg.addonManager.hasOwnProperty('listUrls')) {
+          cfg.addonManager.listUrls.push(cfg.addonManager.listUrl);
+          cfg.addonManager.listUrls =
+            Array.from(new Set(cfg.addonManager.listUrls));
+        } else {
+          cfg.addonManager.listUrls = [cfg.addonManager.listUrl];
+        }
+
+        delete cfg.addonManager.listUrl;
+        changed = true;
+      }
+
+      if (changed) {
+        fs.writeFileSync(userConfigPath, JSON.stringify(cfg, null, 2));
+      }
+    }
+
+    const localConfig = config.util.parseFile(userConfigPath);
+    if (localConfig) {
+      config.util.extendDeep(config, localConfig);
     }
 
     // Move anything that exists in ~/mozilla-iot, such as certbot configs.
@@ -215,7 +280,7 @@ const Profile = {
     if (process.env.NODE_ENV !== 'test') {
       const oldAddonsDir = path.join(this.gatewayDir, 'build', 'addons');
       if (fs.existsSync(oldAddonsDir) &&
-          fs.lstatSync(oldAddonsDir).isDirectory()) {
+        fs.lstatSync(oldAddonsDir).isDirectory()) {
         const fnames = fs.readdirSync(oldAddonsDir);
         for (const fname of fnames) {
           const oldFname = path.join(oldAddonsDir, fname);

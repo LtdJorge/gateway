@@ -4,26 +4,41 @@
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
 'use strict';
 
 const Actions = require('../models/actions');
 const Constants = require('../constants');
+const {Device, Deferred} = require('gateway-addon');
 const Event = require('../models/event');
 const Events = require('../models/events');
+const {MessageType} = require('gateway-addon').Constants;
 const PropertyProxy = require('./property-proxy');
-const {Device, Deferred} = require('gateway-addon');
 
 class DeviceProxy extends Device {
 
   constructor(adapter, deviceDict) {
     super(adapter, deviceDict.id);
 
-    this.name = deviceDict.name;
-    this.type = deviceDict.type;
+    this.title = deviceDict.title;
+    this['@context'] =
+      deviceDict['@context'] || 'https://iot.mozilla.org/schemas';
+    this['@type'] = deviceDict['@type'] || [];
     this.description = deviceDict.description || '';
+    this.links = deviceDict.links || [];
+    this.baseHref = deviceDict.baseHref || null;
+
+    if (deviceDict.hasOwnProperty('pin')) {
+      this.pinRequired = deviceDict.pin.required;
+      this.pinPattern = deviceDict.pin.pattern;
+    } else {
+      this.pinRequired = false;
+      this.pinPattern = null;
+    }
+
+    this.credentialsRequired = !!deviceDict.credentialsRequired;
 
     for (const propertyName in deviceDict.properties) {
       const propertyDict = deviceDict.properties[propertyName];
@@ -35,8 +50,8 @@ class DeviceProxy extends Device {
     // Copy over any extra device fields which might be useful for debugging.
     this.deviceDict = {};
     for (const field in deviceDict) {
-      if (['id', 'name', 'type', 'description', 'properties', 'actions',
-           'events'].includes(field)) {
+      if (['id', 'title', 'description', 'properties', 'actions',
+           'events', '@type', '@context', 'links'].includes(field)) {
         continue;
       }
       this.deviceDict[field] = deviceDict[field];
@@ -63,7 +78,8 @@ class DeviceProxy extends Device {
 
   debugCmd(cmd, params) {
     this.adapter.sendMsg(
-      Constants.DEBUG_CMD, {
+      MessageType.DEVICE_DEBUG_COMMAND,
+      {
         deviceId: this.id,
         cmd: cmd,
         params: params,
@@ -93,12 +109,15 @@ class DeviceProxy extends Device {
       });
 
       this.adapter.sendMsg(
-        Constants.REQUEST_ACTION, {
+        MessageType.DEVICE_REQUEST_ACTION_REQUEST,
+        {
           deviceId: this.id,
           actionName,
           actionId,
           input,
-        }, deferredSet);
+        },
+        deferredSet
+      );
     });
   }
 
@@ -124,12 +143,19 @@ class DeviceProxy extends Device {
       });
 
       this.adapter.sendMsg(
-        Constants.REMOVE_ACTION, {
+        MessageType.DEVICE_REMOVE_ACTION_REQUEST,
+        {
           deviceId: this.id,
           actionName,
           actionId,
-        }, deferredSet);
+        },
+        deferredSet
+      );
     });
+  }
+
+  notifyPropertyChanged(property) {
+    this.adapter.manager.emit(Constants.PROPERTY_CHANGED, property);
   }
 
   actionNotify(action) {
@@ -137,10 +163,16 @@ class DeviceProxy extends Device {
     if (a) {
       a.update(action);
     }
+    this.adapter.manager.emit(Constants.ACTION_STATUS, action);
   }
 
   eventNotify(event) {
     Events.add(new Event(event.name, event.data, this.id, event.timestamp));
+    this.adapter.manager.emit(Constants.EVENT, event);
+  }
+
+  connectedNotify(connected) {
+    this.adapter.manager.emit(Constants.CONNECTED, {device: this, connected});
   }
 }
 

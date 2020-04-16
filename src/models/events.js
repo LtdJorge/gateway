@@ -29,9 +29,15 @@ class Events {
    * Get only the events which are not associated with a specific thing and
    * therefore belong to the root Gateway.
    */
-  getGatewayEvents() {
+  getGatewayEvents(eventName) {
     return this.events.filter((event) => {
       return !event.thingId;
+    }).filter((event) => {
+      if (eventName) {
+        return eventName === event.name;
+      }
+
+      return true;
     }).map((event) => {
       return {[event.name]: event.getDescription()};
     });
@@ -41,9 +47,15 @@ class Events {
   /**
    * Get only the events which are associated with a specific thing.
    */
-  getByThing(thingId) {
+  getByThing(thingId, eventName) {
     return this.events.filter((event) => {
       return event.thingId === thingId;
+    }).filter((event) => {
+      if (eventName) {
+        return eventName === event.name;
+      }
+
+      return true;
     }).map((event) => {
       return {[event.name]: event.getDescription()};
     });
@@ -53,14 +65,20 @@ class Events {
    * Add a new event.
    *
    * @param {Object} event An Event object.
+   * @returns {Promise} Promise which resolves when the event has been added.
    */
   add(event) {
     this.events.push(event);
 
     if (event.thingId) {
-      Things.getThing(event.thingId).then(
-        (thing) => thing.dispatchEvent(event));
+      return Things.getThing(event.thingId).then((thing) => {
+        thing.dispatchEvent(event);
+      }).catch(() => {
+        console.warn('Received event for unknown thing:', event.thingId);
+      });
     }
+
+    return Promise.resolve();
   }
 }
 

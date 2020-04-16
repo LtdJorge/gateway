@@ -2,37 +2,56 @@
 
 # Performs any necessary steps after the main upgrade process is complete.
 
-# For some reason NVM_DIR isn't set at this point
-export NVM_DIR=/home/pi/.nvm
+export NVM_DIR=${HOME}/.nvm
 \. "$NVM_DIR/nvm.sh"  # This loads nvm
-NODE_VERSION="--lts"
-nvm install ${NODE_VERSION}
-nvm use ${NODE_VERSION}
-# always use most recent version (lts)
+nvm use
 nvm alias default node
 
-# Allow node to use the Bluetooth adapter
-sudo setcap cap_net_raw+eip $(eval readlink -f `which node`)
+sudo apt update -y
+
+_all_deps="ffmpeg mosquitto arping wiringpi"
+_missing_deps=""
+for dep in $_all_deps; do
+  if ! dpkg -s "$dep" 2>/dev/null | grep -q '^Status.*installed'; then
+    _missing_deps="$_missing_deps $dep"
+  fi
+done
+
+if [ -n "$_missing_deps" ]; then
+  sudo apt install -y $_missing_deps
+fi
 
 # Upgrade gateway-addon Python package
-_url="git+https://github.com/mozilla-iot/gateway-addon-python#egg=gateway_addon"
-sudo pip2 install -U "$_url"
+_url="git+https://github.com/mozilla-iot/gateway-addon-python@v0.12.0#egg=gateway_addon"
 sudo pip3 install -U "$_url"
 
-# Install thing-url-adapter
-addons_dir=/home/pi/.mozilla-iot/addons
-if [ ! -d "${addons_dir}/thing-url-adapter" ]; then
-  mkdir -p "${addons_dir}"
-  addon_list=$(curl "https://raw.githubusercontent.com/mozilla-iot/addon-list/master/list.json")
-  tempdir=$(mktemp -d)
-  thing_url=$(echo "${addon_list}" | python3 -c \
-    "import json, sys; \
-    l = json.loads(sys.stdin.read()); \
-    print([x['packages'] for x in l if x['name'] == 'thing-url-adapter'][0]['linux-arm']['url']);")
-  curl -L -o "${tempdir}/thing-url-adapter.tgz" "${thing_url}"
-  tar xzf "${tempdir}/thing-url-adapter.tgz" -C "${addons_dir}"
-  mv "${addons_dir}/package" "${addons_dir}/thing-url-adapter"
-  rm -rf "${tempdir}"
+# Uninstall py2 version of gateway-addon, if present
+sudo pip2 uninstall -y gateway_addon || true
+
+# Uninstall adapt-parser, if present
+sudo pip3 uninstall -y adapt-parser || true
+
+sudo systemctl enable mozilla-iot-gateway.service
+sudo systemctl disable mozilla-gateway-wifi-setup.service || true
+sudo systemctl disable mozilla-iot-gateway.renew-certificates.timer || true
+
+if sudo test -e "/root/gateway-wifi-setup/wifiskip"; then
+  touch "$HOME/.mozilla-iot/config/wifiskip"
 fi
+
+rm -rf "$HOME/mozilla-iot/intent-parser"
+sudo systemctl disable mozilla-iot-gateway.intent-parser.service || true
+
+# if the node version changed, we need to update add-ons
+if [[ ! -f "$HOME/mozilla-iot/gateway_old/.nvmrc" ||
+      $(sha256sum "$HOME/mozilla-iot/gateway_old/.nvmrc") != $(sha256sum "$HOME/mozilla-iot/gateway/.nvmrc") ]]; then
+  cd "$HOME/mozilla-iot/gateway"
+  ./tools/update-addons.sh
+  cd -
+fi
+
+cd "$HOME/mozilla-iot/gateway/node_modules/gateway-addon"
+npm link
+cd -
 
 touch .post_upgrade_complete

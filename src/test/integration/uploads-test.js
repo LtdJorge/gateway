@@ -1,8 +1,5 @@
 'use strict';
 
-/* Tell jshint about mocha globals, and  */
-/* globals it */
-
 const {server, chai} = require('../common');
 const fs = require('fs');
 const path = require('path');
@@ -13,7 +10,7 @@ const {
   headerAuth,
 } = require('../user');
 
-describe('uploads/', function() {
+describe('uploads/', () => {
   let jwt;
   beforeEach(async () => {
     jwt = await createUser(server, TEST_USER);

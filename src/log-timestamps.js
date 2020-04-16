@@ -6,12 +6,64 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
 'use strict';
 
+const winston = require('winston');
+const DailyRotateFile = require('winston-daily-rotate-file');
+const UserProfile = require('./user-profile');
 const format = require('util').format;
+
+class CustomFormatter {
+  transform(info) {
+    const level = info.level.toUpperCase().padEnd(7, ' ');
+    info.message = `${info.timestamp} ${level}: ${info.message}`;
+    return info;
+  }
+}
+
+const timestampFormat = winston.format.timestamp({
+  format: 'YYYY-MM-DD HH:mm:ss.SSS',
+});
+
+const logger = winston.createLogger({
+  level: 'debug',
+  transports: [
+    new winston.transports.Console({
+      format: winston.format.combine(
+        timestampFormat,
+        new CustomFormatter(),
+        winston.format.colorize({
+          all: true,
+          colors: {
+            debug: 'white',
+            info: 'dim white',
+            warn: 'yellow',
+            error: 'red',
+          },
+        }),
+        winston.format.printf((info) => info.message)
+      ),
+    }),
+    new DailyRotateFile({
+      dirname: UserProfile.logDir,
+      filename: 'run-app.log.%DATE%',
+      symlinkName: 'run-app.log',
+      createSymlink: true,
+      zippedArchive: false,
+      maxSize: '10m',
+      maxFiles: 10,
+      format: winston.format.combine(
+        timestampFormat,
+        new CustomFormatter(),
+        winston.format.printf((info) => info.message)
+      ),
+    }),
+  ],
+  exitOnError: false,
+});
 
 function logPrefix() {
   const currTime = new Date();
@@ -84,13 +136,14 @@ if (!console.constructor.hooked) {
     // jest's CustomConsole doesn't provide a debug, so we skip it as well.
   } else {
     // This path is for the normal non-jest output
-    const FUNCS = ['log', 'info', 'debug', 'error', 'warn'];
+    const FUNCS = ['info', 'debug', 'error', 'warn', 'verbose', 'silly'];
 
     for (const func of FUNCS) {
-      const realFunc = console[func];
       console[func] = function() {
-        realFunc(logPrefix() + format.apply(null, arguments));
+        logger[func](format.apply(null, arguments));
       };
     }
+
+    console.log = console.info;
   }
 }

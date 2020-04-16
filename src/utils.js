@@ -6,9 +6,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+'use strict';
+
 const crypto = require('crypto');
 const fs = require('fs');
-const process = require('process');
+const platform = require('./platform');
+const pkg = require('../package.json');
 
 module.exports = {
   /**
@@ -17,7 +20,7 @@ module.exports = {
    * @param {String} fname File path
    * @returns A checksum as a lower case hex string.
    */
-  hashFile: function(fname) {
+  hashFile: (fname) => {
     const hash = crypto.createHash('sha256');
 
     let fd;
@@ -46,16 +49,9 @@ module.exports = {
   },
 
   /**
-   * Get the current architecture as "os-machine", i.e. darwin-x64.
-   */
-  getArchitecture: function() {
-    return `${process.platform}-${process.arch}`;
-  },
-
-  /**
    * Escape text such that it's safe to be placed in HTML.
    */
-  escapeHtml: function(text) {
+  escapeHtml: (text) => {
     if (typeof text !== 'string') {
       text = `${text}`;
     }
@@ -66,5 +62,13 @@ module.exports = {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  },
+
+  getGatewayUserAgent: () => {
+    const primary = `mozilla-iot-gateway/${pkg.version}`;
+    const secondary = `(${platform.getArchitecture()}; ${platform.getOS()})`;
+    const tertiary = platform.isDocker() ? ' (docker)' : '';
+
+    return `${primary} ${secondary}${tertiary}`;
   },
 };

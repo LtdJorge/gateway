@@ -10,102 +10,126 @@
 
 'use strict';
 
+const UserProfile = require('./user-profile');
+UserProfile.init();
+
+const AddonUtils = require('./addon-utils');
 const config = require('config');
-const Constants = require('./constants');
+const dynamicRequire = require('./dynamic-require');
 const GetOpt = require('node-getopt');
-const PluginClient = require('./plugin/plugin-client');
+const {PluginClient} = require('gateway-addon');
 const db = require('./db');
 const Settings = require('./models/settings');
-const fs = require('fs');
+const sleep = require('./sleep');
 const path = require('path');
+const {DONT_RESTART_EXIT_CODE} = require('gateway-addon').Constants;
+const {spawnSync} = require('child_process');
+const fs = require('fs');
 
 // Open the database.
-db.open();
+if (process.env.NODE_ENV !== 'test') {
+  // In test mode, we have a flag set to remove the database when it's opened.
+  // Therefore, we need to manually load settings and such, rather than using
+  // the normal db functions, in order to prevent removing the already open
+  // database.
+  db.open();
+}
 
 async function loadAddon(addonPath, verbose) {
-  // Skip if there's no package.json file.
-  const packageJson = path.join(addonPath, 'package.json');
-  if (!fs.lstatSync(packageJson).isFile()) {
-    const err = `package.json not found: ${packageJson}`;
-    return Promise.reject(err);
-  }
-
-  // Read the package.json file.
-  let data;
-  try {
-    data = fs.readFileSync(packageJson);
-  } catch (e) {
-    const err =
-      `Failed to read package.json: ${packageJson}\n${e}`;
-    return Promise.reject(err);
-  }
-
-  let manifest;
-  try {
-    manifest = JSON.parse(data);
-  } catch (e) {
-    const err =
-      `Failed to parse package.json: ${packageJson}\n${e}`;
-    return Promise.reject(err);
-  }
-  const packageName = manifest.name;
-
-  // Verify API version.
-  const apiVersion = config.get('addonManager.api');
-  if (manifest.moziot.api.min > apiVersion ||
-      manifest.moziot.api.max < apiVersion) {
-    return Promise.reject(
-      `API mismatch for package: ${manifest.name}\n` +
-      `Current: ${apiVersion} ` +
-      `Supported: ${manifest.moziot.api.min}-${manifest.moziot.api.max}`);
-  }
+  const packageName = path.basename(addonPath);
 
   // Get any saved settings for this add-on.
-  const key = `addons.${manifest.name}`;
-  const savedSettings = await Settings.get(key);
-  const newSettings = Object.assign({}, manifest);
-  if (savedSettings) {
-    // Overwrite config values.
-    newSettings.moziot.config = Object.assign(manifest.moziot.config || {},
-                                              savedSettings.moziot.config);
-  } else if (!newSettings.moziot.hasOwnProperty('config')) {
+  const key = `addons.${packageName}`;
+  const configKey = `addons.config.${packageName}`;
+
+  let obj, savedConfig;
+  if (process.env.NODE_ENV === 'test') {
+    [obj, savedConfig] = AddonUtils.loadManifest(addonPath.split('/').pop());
+  } else {
+    obj = await Settings.get(key);
+  }
+
+  const newSettings = {
+    name: obj.id,
+    display_name: obj.name,
+    moziot: {
+      exec: obj.exec,
+    },
+  };
+
+  if (obj.schema) {
+    newSettings.moziot.schema = obj.schema;
+  }
+
+  if (process.env.NODE_ENV !== 'test') {
+    savedConfig = await Settings.get(configKey);
+  }
+
+  if (savedConfig) {
+    newSettings.moziot.config = savedConfig;
+  } else {
     newSettings.moziot.config = {};
   }
 
-  const pluginClient = new PluginClient(packageName, {verbose: verbose});
+  const pluginClient = new PluginClient(
+    packageName,
+    {verbose}
+  );
 
-  if (config.get('ipc.protocol') !== 'inproc') {
-    pluginClient.on('unloaded', () => process.exit(0));
-  }
+  return pluginClient.register(config.get('ports.ipc'))
+    .catch((e) => {
+      throw new Error(
+        `Failed to register add-on ${packageName} with gateway: ${e}`
+      );
+    })
+    .then((addonManagerProxy) => {
+      console.log(`Loading add-on ${packageName} from ${addonPath}`);
+      try {
+        // we try to link to a global gateway-addon module, because in some
+        // cases, NODE_PATH seems to not work
+        const modulePath = path.join(
+          addonPath,
+          'node_modules',
+          'gateway-addon'
+        );
+        if (!fs.existsSync(modulePath)) {
+          spawnSync(
+            'npm',
+            ['link', 'gateway-addon'],
+            {
+              cwd: addonPath,
+            }
+          );
+        }
 
-  return new Promise((resolve, reject) => {
-    pluginClient.register().then((addonManagerProxy) => {
-      console.log('Loading add-on for', manifest.name,
-                  'from', addonPath);
-      const addonLoader = dynamicRequire(addonPath);
-      addonLoader(addonManagerProxy, newSettings, (packageName, errorStr) => {
-        console.error('Failed to load', packageName, '-', errorStr);
-        addonManagerProxy.unloadPlugin();
-        process.exit(Constants.DONT_RESTART_EXIT_CODE);
-      });
-      resolve();
-    }).catch((e) => {
-      console.error(e);
-      const err =
-        `Failed to register package: ${manifest.name} with gateway`;
-      reject(err);
+        const addonLoader = dynamicRequire(addonPath);
+        addonLoader(addonManagerProxy, newSettings, (packageName, err) => {
+          console.error(`Failed to start add-on ${packageName}:`, err);
+          fail(
+            addonManagerProxy,
+            `Failed to start add-on ${obj.name}: ${err}`
+          );
+        });
+
+        pluginClient.on('unloaded', () => {
+          sleep(500).then(() => process.exit(0));
+        });
+      } catch (e) {
+        console.error(e);
+        const message = `Failed to start add-on ${obj.name}: ${
+          e.toString().replace(/^Error:\s+/, '')}`;
+        fail(addonManagerProxy, message);
+      }
     });
-  });
 }
 
-// Use webpack provided require for dynamic includes from the bundle  .
-const dynamicRequire = (() => {
-  if (typeof __non_webpack_require__ !== 'undefined') {
-    // eslint-disable-next-line no-undef
-    return __non_webpack_require__;
-  }
-  return require;
-})();
+async function fail(addonManagerProxy, message) {
+  addonManagerProxy.sendError(message);
+  await sleep(200);
+  addonManagerProxy.unloadPlugin();
+  await sleep(200);
+  process.exit(DONT_RESTART_EXIT_CODE);
+}
 
 // Get some decent error messages for unhandled rejections. This is
 // often just errors in the code.
@@ -128,16 +152,16 @@ if (opt.options.verbose) {
 
 if (opt.options.help) {
   getopt.showHelp();
-  process.exit(Constants.DONT_RESTART_EXIT_CODE);
+  process.exit(DONT_RESTART_EXIT_CODE);
 }
 
 if (opt.argv.length != 1) {
   console.error('Expecting a single package to load');
-  process.exit(Constants.DONT_RESTART_EXIT_CODE);
+  process.exit(DONT_RESTART_EXIT_CODE);
 }
 const addonPath = opt.argv[0];
 
-loadAddon(addonPath, opt.verbose).catch((err) => {
+loadAddon(addonPath, opt.options.verbose).catch((err) => {
   console.error(err);
-  process.exit(Constants.DONT_RESTART_EXIT_CODE);
+  process.exit(DONT_RESTART_EXIT_CODE);
 });

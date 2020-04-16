@@ -1,8 +1,5 @@
 'use strict';
 
-/* Tell jshint about mocha globals, and  */
-/* globals it */
-
 const {server, chai, mockAdapter} = require('../common');
 const {
   TEST_USER,
@@ -10,7 +7,6 @@ const {
   headerAuth,
 } = require('../user');
 
-const pFinal = require('../promise-final');
 const e2p = require('event-to-promise');
 
 const {
@@ -28,28 +24,99 @@ const Events = require('../../models/events');
 
 const TEST_THING = {
   id: 'test-1',
-  type: 'onOffSwitch',
-  name: 'test-1',
+  title: 'test-1',
+  '@context': 'https://iot.mozilla.org/schemas',
+  '@type': ['OnOffSwitch'],
   properties: {
-    on: {type: 'boolean', value: false},
+    power: {
+      '@type': 'OnOffProperty',
+      type: 'boolean',
+      value: false,
+    },
+    percent: {
+      '@type': 'LevelProperty',
+      type: 'number',
+      value: 20,
+    },
+  },
+};
+
+const VALIDATION_THING = {
+  id: 'validation-1',
+  title: 'validation-1',
+  '@context': 'https://iot.mozilla.org/schemas',
+  properties: {
+    readOnlyProp: {
+      type: 'boolean',
+      readOnly: true,
+      value: true,
+    },
+    minMaxProp: {
+      type: 'number',
+      minimum: 10,
+      maximum: 20,
+      value: 15,
+    },
+    enumProp: {
+      type: 'string',
+      enum: [
+        'val1',
+        'val2',
+        'val3',
+      ],
+      value: 'val2',
+    },
+    multipleProp: {
+      type: 'integer',
+      minimum: 0,
+      maximum: 600,
+      value: 10,
+      multipleOf: 5,
+    },
   },
 };
 
 const piDescr = {
   id: 'pi-1',
-  type: 'thing',
-  name: 'pi-1',
+  title: 'pi-1',
+  '@context': 'https://iot.mozilla.org/schemas',
+  '@type': ['OnOffSwitch'],
   properties: {
-    on: {type: 'boolean', value: true},
+    power: {
+      '@type': 'OnOffProperty',
+      type: 'boolean',
+      value: true,
+      links: [
+        {
+          rel: 'alternate',
+          href: '/properties/power',
+          proxy: true,
+        },
+      ],
+    },
   },
   actions: {
     reboot: {
       description: 'Reboot the device',
+      links: [
+        {
+          rel: 'alternate',
+          href: '/actions/reboot',
+          proxy: true,
+        },
+      ],
     },
   },
   events: {
     reboot: {
       description: 'Going down for reboot',
+      links: [
+        {
+          rel: 'alternate',
+          href: '/events/reboot',
+          proxy: true,
+        },
+      ],
     },
   },
 };
@@ -67,6 +134,9 @@ describe('things/', function() {
       .set('Accept', 'application/json')
       .set(...headerAuth(jwt))
       .send(desc);
+    if (res.status !== 201) {
+      throw res;
+    }
     await mockAdapter().addDevice(id, desc);
     return res;
   }
@@ -74,7 +144,7 @@ describe('things/', function() {
   function makeDescr(id) {
     return {
       id: id,
-      name: id,
+      title: id,
       properties: {},
     };
   }
@@ -90,22 +160,21 @@ describe('things/', function() {
   });
 
   it('fail to create a new thing (empty body)', async () => {
-    try {
-      await chai.request(server)
-        .post(Constants.THINGS_PATH)
-        .set(...headerAuth(jwt))
-        .set('Accept', 'application/json')
-        .send();
-      throw new Error('Should have failed to create new thing');
-    } catch (err) {
-      expect(err.response.status).toEqual(400);
-    }
+    const err = await chai.request(server)
+      .post(Constants.THINGS_PATH)
+      .set(...headerAuth(jwt))
+      .set('Accept', 'application/json')
+      .send();
+    expect(err.status).toEqual(400);
   });
 
   it('fail to create a new thing (duplicate)', async () => {
     await addDevice();
-    const err = await pFinal(addDevice());
-    expect(err.response.status).toEqual(400);
+    try {
+      await addDevice();
+    } catch (err) {
+      expect(err.status).toEqual(400);
+    }
   });
 
   it('GET with 1 thing', async () => {
@@ -123,6 +192,80 @@ describe('things/', function() {
   });
 
   it('GET a thing', async () => {
+    const thingDescr = JSON.parse(JSON.stringify(piDescr));
+
+    await addDevice(thingDescr);
+    const res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/${thingDescr.id}`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('title');
+    expect(res.body.title).toEqual(thingDescr.title);
+
+    // Fix up links
+    delete thingDescr.properties.power.links[0].proxy;
+    thingDescr.properties.power.links[0].href =
+      `${Constants.PROXY_PATH}/${thingDescr.id}${
+        thingDescr.properties.power.links[0].href}`;
+    thingDescr.properties.power.links.push({
+      rel: 'property',
+      href: `${Constants.THINGS_PATH}/${thingDescr.id}${
+        Constants.PROPERTIES_PATH}/power`,
+    });
+
+    delete thingDescr.actions.reboot.links[0].proxy;
+    thingDescr.actions.reboot.links[0].href =
+      `${Constants.PROXY_PATH}/${thingDescr.id}${
+        thingDescr.actions.reboot.links[0].href}`;
+    thingDescr.actions.reboot.links.push({
+      rel: 'action',
+      href: `${Constants.THINGS_PATH}/${thingDescr.id}${
+        Constants.ACTIONS_PATH}/reboot`,
+    });
+
+    delete thingDescr.events.reboot.links[0].proxy;
+    thingDescr.events.reboot.links[0].href =
+      `${Constants.PROXY_PATH}/${thingDescr.id}${
+        thingDescr.events.reboot.links[0].href}`;
+    thingDescr.events.reboot.links.push({
+      rel: 'event',
+      href: `${Constants.THINGS_PATH}/${thingDescr.id}${
+        Constants.EVENTS_PATH}/reboot`,
+    });
+
+    delete thingDescr.id;
+    delete thingDescr.properties.power.value;
+
+    expect(res.body).toMatchObject(thingDescr);
+  });
+
+  it('GET a thing\'s proxied resources', async () => {
+    const thingDescr = JSON.parse(JSON.stringify(piDescr));
+
+    await addDevice(thingDescr);
+
+    const res = await chai.request(server)
+      .get(`${Constants.PROXY_PATH}/${thingDescr.id}/properties/power`)
+      .set('Accept', 'text/plain')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.text).toEqual('GET /properties/power');
+  });
+
+  it('fail to GET a nonexistent thing', async () => {
+    await addDevice();
+    const err = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/test-2`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(err.status).toEqual(404);
+  });
+
+  it('fail to rename a thing', async () => {
     const thingDescr = Object.assign({}, piDescr);
 
     await addDevice(thingDescr);
@@ -132,93 +275,162 @@ describe('things/', function() {
       .set(...headerAuth(jwt));
 
     expect(res.status).toEqual(200);
-    expect(res.body).toHaveProperty('name');
-    expect(res.body.name).toEqual(thingDescr.id);
-    delete thingDescr.id;
-    expect(res.body).toMatchObject(thingDescr);
+    expect(res.body).toHaveProperty('title');
+    expect(res.body.title).toEqual(thingDescr.title);
+
+    let err = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/${thingDescr.id}`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({});
+
+    expect(err.status).toEqual(400);
+
+    err = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/${thingDescr.id}`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({title: '  \n  '});
+
+    expect(err.status).toEqual(400);
   });
 
-  it('fail to GET a non-existent thing', async () => {
-    await addDevice();
-    const err = await pFinal(chai.request(server)
-      .get(`${Constants.THINGS_PATH}/test-2`)
-      .set('Accept', 'application/json')
-      .set(...headerAuth(jwt)));
+  it('rename a thing', async () => {
+    const thingDescr = Object.assign({}, piDescr);
 
-    expect(err.response.status).toEqual(404);
+    await addDevice(thingDescr);
+    let res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/${thingDescr.id}`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('title');
+    expect(res.body.title).toEqual(thingDescr.title);
+
+    res = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/${thingDescr.id}`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({title: 'new title'});
+
+    expect(res.status).toEqual(200);
+
+    res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/${thingDescr.id}`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('title');
+    expect(res.body.title).toEqual('new title');
+  });
+
+  it('GET all properties of a thing', async () => {
+    await addDevice();
+    const res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/test-1/properties`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('power');
+    expect(res.body.power).toEqual(false);
+    expect(res.body).toHaveProperty('percent');
+    expect(res.body.percent).toEqual(20);
   });
 
   it('GET a property of a thing', async () => {
     await addDevice();
     const res = await chai.request(server)
-      .get(`${Constants.THINGS_PATH}/test-1/properties/on`)
+      .get(`${Constants.THINGS_PATH}/test-1/properties/power`)
       .set('Accept', 'application/json')
       .set(...headerAuth(jwt));
 
     expect(res.status).toEqual(200);
-    expect(res.body).toHaveProperty('on');
-    expect(res.body.on).toEqual(false);
+    expect(res.body).toHaveProperty('power');
+    expect(res.body.power).toEqual(false);
   });
 
-  it('fail to GET a non-existant property of a thing', async () => {
-    const err = await pFinal(chai.request(server)
+  it('fail to GET a nonexistent property of a thing', async () => {
+    await addDevice();
+    const err = await chai.request(server)
       .get(`${Constants.THINGS_PATH}/test-1/properties/xyz`)
       .set('Accept', 'application/json')
-      .set(...headerAuth(jwt)));
+      .set(...headerAuth(jwt));
 
-    expect(err.response.status).toEqual(500);
+    expect(err.status).toEqual(500);
   });
 
-  it('fail to GET a property of a non-existent thing', async () => {
-    const err = await pFinal(chai.request(server)
-      .get(`${Constants.THINGS_PATH}/test-1a/properties/on`)
+  it('fail to GET a property of a nonexistent thing', async () => {
+    const err = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/test-1a/properties/power`)
       .set('Accept', 'application/json')
-      .set(...headerAuth(jwt)));
-    expect(err.response.status).toEqual(500);
+      .set(...headerAuth(jwt));
+    expect(err.status).toEqual(500);
   });
 
   it('fail to set a property of a thing', async () => {
     await addDevice();
-    const err = await pFinal(chai.request(server)
-      .put(`${Constants.THINGS_PATH}/test-1/properties/on`)
+    const err = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/test-1/properties/power`)
       .set('Accept', 'application/json')
       .set(...headerAuth(jwt))
-      .send({}));
-    expect(err.response.status).toEqual(400);
+      .send({});
+    expect(err.status).toEqual(400);
   });
 
   it('fail to set a property of a thing', async () => {
-    const err = await pFinal(chai.request(server)
-      .put(`${Constants.THINGS_PATH}/test-1/properties/on`)
+    const err = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/test-1/properties/power`)
       .set('Accept', 'application/json')
       .set(...headerAuth(jwt))
-      .send({abc: true}));
-    expect(err.response.status).toEqual(400);
+      .send({abc: true});
+    expect(err.status).toEqual(400);
   });
 
   it('set a property of a thing', async () => {
     await addDevice();
     const on = await chai.request(server)
-      .put(`${Constants.THINGS_PATH}/test-1/properties/on`)
+      .put(`${Constants.THINGS_PATH}/test-1/properties/power`)
       .set('Accept', 'application/json')
       .set(...headerAuth(jwt))
-      .send({on: true});
+      .send({power: true});
 
     expect(on.status).toEqual(200);
-    expect(on.body).toHaveProperty('on');
-    expect(on.body.on).toEqual(true);
+    expect(on.body).toHaveProperty('power');
+    expect(on.body.power).toEqual(true);
 
 
     // Flip it back to off...
     const off = await chai.request(server)
-      .put(`${Constants.THINGS_PATH}/test-1/properties/on`)
+      .put(`${Constants.THINGS_PATH}/test-1/properties/power`)
       .set('Accept', 'application/json')
       .set(...headerAuth(jwt))
-      .send({on: false});
+      .send({power: false});
 
     expect(off.status).toEqual(200);
-    expect(off.body).toHaveProperty('on');
-    expect(off.body.on).toEqual(false);
+    expect(off.body).toHaveProperty('power');
+    expect(off.body.power).toEqual(false);
+  });
+
+  it('fail to set x and y coordinates of a non-existent thing', async () => {
+    const err = await chai.request(server)
+      .patch(`${Constants.THINGS_PATH}/test-1`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({abc: true});
+    expect(err.status).toEqual(404);
+  });
+
+  it('fail to set x and y coordinates of a thing', async () => {
+    await addDevice();
+    const err = await chai.request(server)
+      .patch(`${Constants.THINGS_PATH}/test-1`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({abc: true});
+    expect(err.status).toEqual(400);
   });
 
   it('set x and y coordinates of a thing', async () => {
@@ -236,13 +448,17 @@ describe('things/', function() {
     expect(on.body.floorplanY).toEqual(20);
   });
 
-  it('fail to set x and y coordinates of a thing', async () => {
-    const err = await pFinal(chai.request(server)
+  it('set layout index of a thing', async () => {
+    await addDevice();
+    const on = await chai.request(server)
       .patch(`${Constants.THINGS_PATH}/test-1`)
       .set('Accept', 'application/json')
       .set(...headerAuth(jwt))
-      .send({abc: true}));
-    expect(err.response.status).toEqual(400);
+      .send({layoutIndex: 15});
+
+    expect(on.status).toEqual(200);
+    expect(on.body).toHaveProperty('layoutIndex');
+    expect(on.body.layoutIndex).toEqual(15);
   });
 
   it('lists 0 new things after creating thing', async () => {
@@ -467,16 +683,16 @@ describe('things/', function() {
                                    jwt);
 
     const [messages, res] = await Promise.all([
-      webSocketRead(ws, 1),
+      webSocketRead(ws, 3),
       chai.request(server)
-        .put(`${Constants.THINGS_PATH}/${TEST_THING.id}/properties/on`)
+        .put(`${Constants.THINGS_PATH}/${TEST_THING.id}/properties/power`)
         .set('Accept', 'application/json')
         .set(...headerAuth(jwt))
-        .send({on: true}),
+        .send({power: true}),
     ]);
     expect(res.status).toEqual(200);
-    expect(messages[0].messageType).toEqual(Constants.PROPERTY_STATUS);
-    expect(messages[0].data.on).toEqual(true);
+    expect(messages[2].messageType).toEqual(Constants.PROPERTY_STATUS);
+    expect(messages[2].data.power).toEqual(true);
 
     await webSocketClose(ws);
   });
@@ -489,18 +705,18 @@ describe('things/', function() {
     await webSocketSend(ws, {
       messageType: Constants.SET_PROPERTY,
       data: {
-        on: true,
+        power: true,
       },
     });
 
     const on = await chai.request(server)
-      .get(`${Constants.THINGS_PATH}/test-1/properties/on`)
+      .get(`${Constants.THINGS_PATH}/test-1/properties/power`)
       .set('Accept', 'application/json')
       .set(...headerAuth(jwt));
 
     expect(on.status).toEqual(200);
-    expect(on.body).toHaveProperty('on');
-    expect(on.body.on).toEqual(true);
+    expect(on.body).toHaveProperty('power');
+    expect(on.body.power).toEqual(true);
 
     await webSocketClose(ws);
   });
@@ -519,17 +735,18 @@ describe('things/', function() {
        };
        const [sendError, messages] = await Promise.all([
          webSocketSend(ws, request),
-         webSocketRead(ws, 1),
+         webSocketRead(ws, 3),
        ]);
 
        expect(sendError).toBeFalsy();
 
-       const error = messages[0];
+       const error = messages[2];
        expect(error.messageType).toBe(Constants.ERROR);
        expect(error.data.request).toMatchObject(request);
 
        await webSocketClose(ws);
-     });
+     }
+  );
 
   it('should receive an error from sending a malformed message',
      async () => {
@@ -541,16 +758,17 @@ describe('things/', function() {
 
        const [sendError, messages] = await Promise.all([
          webSocketSend(ws, request),
-         webSocketRead(ws, 1),
+         webSocketRead(ws, 3),
        ]);
 
        expect(sendError).toBeFalsy();
 
-       const error = messages[0];
+       const error = messages[2];
        expect(error.messageType).toBe(Constants.ERROR);
 
        await webSocketClose(ws);
-     });
+     }
+  );
 
   it('should fail to connect to a nonexistent thing over websocket',
      async () => {
@@ -566,7 +784,8 @@ describe('things/', function() {
        if (ws.readyState !== WebSocket.CLOSED) {
          await e2p(ws, 'close');
        }
-     });
+     }
+  );
 
   it('should only receive propertyStatus messages from the connected thing',
      async () => {
@@ -574,7 +793,7 @@ describe('things/', function() {
        const otherThingId = 'test-7';
        await addDevice(Object.assign({}, TEST_THING, {
          id: otherThingId,
-         name: otherThingId,
+         title: otherThingId,
        }));
        const ws =
          await webSocketOpen(`${Constants.THINGS_PATH}/${TEST_THING.id}`, jwt);
@@ -586,37 +805,38 @@ describe('things/', function() {
        // WS correctly received both of test-1's statuses.
        const [res, messages] = await Promise.all([
          chai.request(server)
-           .put(`${Constants.THINGS_PATH}/${otherThingId}/properties/on`)
+           .put(`${Constants.THINGS_PATH}/${otherThingId}/properties/power`)
            .set('Accept', 'application/json')
            .set(...headerAuth(jwt))
-           .send({on: true}).then(() => {
+           .send({power: true}).then(() => {
              return chai.request(server)
                .put(`${Constants.THINGS_PATH}/${TEST_THING.id
-               }/properties/on`)
+               }/properties/power`)
                .set('Accept', 'application/json')
                .set(...headerAuth(jwt))
-               .send({on: true});
+               .send({power: true});
            }).then(() => {
              return chai.request(server)
                .put(`${Constants.THINGS_PATH}/${TEST_THING.id
-               }/properties/on`)
+               }/properties/power`)
                .set('Accept', 'application/json')
                .set(...headerAuth(jwt))
-               .send({on: false});
+               .send({power: false});
            }),
-         webSocketRead(ws, 2),
+         webSocketRead(ws, 4),
        ]);
 
        expect(res.status).toEqual(200);
 
-       expect(messages[0].messageType).toEqual(Constants.PROPERTY_STATUS);
-       expect(messages[0].data.on).toEqual(true);
+       expect(messages[2].messageType).toEqual(Constants.PROPERTY_STATUS);
+       expect(messages[2].data.power).toEqual(true);
 
-       expect(messages[1].messageType).toEqual(Constants.PROPERTY_STATUS);
-       expect(messages[1].data.on).toEqual(false);
+       expect(messages[3].messageType).toEqual(Constants.PROPERTY_STATUS);
+       expect(messages[3].data.power).toEqual(false);
 
        await webSocketClose(ws);
-     });
+     }
+  );
 
   it('should receive event notifications over websocket',
      async () => {
@@ -648,25 +868,103 @@ describe('things/', function() {
            Events.add(eventASecond);
            return true;
          })(),
-         webSocketRead(ws, 2),
+         webSocketRead(ws, 4),
        ]);
 
        expect(res).toBeTruthy();
 
-       expect(messages[0].messageType).toEqual(Constants.EVENT);
-       expect(messages[0].data).toHaveProperty(eventAFirst.name);
-       expect(messages[0].data[eventAFirst.name]).toHaveProperty('data');
-       expect(messages[0].data[eventAFirst.name].data).toEqual(
+       expect(messages[2].messageType).toEqual(Constants.EVENT);
+       expect(messages[2].data).toHaveProperty(eventAFirst.name);
+       expect(messages[2].data[eventAFirst.name]).toHaveProperty('data');
+       expect(messages[2].data[eventAFirst.name].data).toEqual(
          eventAFirst.data);
 
-       expect(messages[1].messageType).toEqual(Constants.EVENT);
-       expect(messages[1].data).toHaveProperty(eventASecond.name);
-       expect(messages[1].data[eventASecond.name]).toHaveProperty('data');
+       expect(messages[3].messageType).toEqual(Constants.EVENT);
+       expect(messages[3].data).toHaveProperty(eventASecond.name);
+       expect(messages[3].data[eventASecond.name]).toHaveProperty('data');
        expect(
-         messages[1].data[eventASecond.name].data).toEqual(eventASecond.data);
+         messages[3].data[eventASecond.name].data).toEqual(eventASecond.data);
 
        await webSocketClose(ws);
-     });
+     }
+  );
+
+  it('should be able to retrieve events', async () => {
+    await addDevice();
+
+    let res = await chai.request(server)
+      .get(Constants.EVENTS_PATH)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(Array.isArray(res.body)).toBeTruthy();
+    expect(res.body.length).toEqual(0);
+
+    res = await chai.request(server)
+      .get(`${Constants.EVENTS_PATH}/a`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(Array.isArray(res.body)).toBeTruthy();
+    expect(res.body.length).toEqual(0);
+
+    const thingBase = `${Constants.THINGS_PATH}/${TEST_THING.id}`;
+
+    res = await chai.request(server)
+      .get(thingBase + Constants.EVENTS_PATH)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(Array.isArray(res.body)).toBeTruthy();
+    expect(res.body.length).toEqual(0);
+
+    res = await chai.request(server)
+      .get(`${thingBase}${Constants.EVENTS_PATH}/a`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(Array.isArray(res.body)).toBeTruthy();
+    expect(res.body.length).toEqual(0);
+
+    const eventA = new Event('a', 'just a cool event', TEST_THING.id);
+    const eventB = new Event('b', 'just a boring event', TEST_THING.id);
+    await Events.add(eventA);
+    await Events.add(eventB);
+
+    res = await chai.request(server)
+      .get(thingBase + Constants.EVENTS_PATH)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(Array.isArray(res.body)).toBeTruthy();
+    expect(res.body.length).toEqual(2);
+    expect(res.body[0]).toHaveProperty('a');
+    expect(res.body[0].a).toHaveProperty('data');
+    expect(res.body[0].a.data).toBe('just a cool event');
+    expect(res.body[0].a).toHaveProperty('timestamp');
+    expect(res.body[1]).toHaveProperty('b');
+    expect(res.body[1].b).toHaveProperty('data');
+    expect(res.body[1].b.data).toBe('just a boring event');
+    expect(res.body[1].b).toHaveProperty('timestamp');
+
+    res = await chai.request(server)
+      .get(`${thingBase}${Constants.EVENTS_PATH}/a`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(Array.isArray(res.body)).toBeTruthy();
+    expect(res.body.length).toEqual(1);
+    expect(res.body[0]).toHaveProperty('a');
+    expect(res.body[0].a).toHaveProperty('data');
+    expect(res.body[0].a.data).toBe('just a cool event');
+    expect(res.body[0].a).toHaveProperty('timestamp');
+  });
 
   it('should receive thing\'s action status messages over websocket',
      async () => {
@@ -707,23 +1005,24 @@ describe('things/', function() {
 
            return actionHref;
          })(),
-         webSocketRead(ws, 3),
+         webSocketRead(ws, 5),
        ]);
 
-       expect(messages[0].messageType).toEqual(Constants.ACTION_STATUS);
-       expect(messages[0].data.pair.status).toEqual('created');
-       expect(messages[0].data.pair.href).toEqual(actionHref);
-
-       expect(messages[1].messageType).toEqual(Constants.ACTION_STATUS);
-       expect(messages[1].data.pair.status).toEqual('pending');
-       expect(messages[1].data.pair.href).toEqual(actionHref);
-
        expect(messages[2].messageType).toEqual(Constants.ACTION_STATUS);
-       expect(messages[2].data.pair.status).toEqual('deleted');
+       expect(messages[2].data.pair.status).toEqual('created');
        expect(messages[2].data.pair.href).toEqual(actionHref);
 
+       expect(messages[3].messageType).toEqual(Constants.ACTION_STATUS);
+       expect(messages[3].data.pair.status).toEqual('pending');
+       expect(messages[3].data.pair.href).toEqual(actionHref);
+
+       expect(messages[4].messageType).toEqual(Constants.ACTION_STATUS);
+       expect(messages[4].data.pair.status).toEqual('deleted');
+       expect(messages[4].data.pair.href).toEqual(actionHref);
+
        await webSocketClose(ws);
-     });
+     }
+  );
 
   it('should close websocket connections on thing deletion', async () => {
     await addDevice();
@@ -751,7 +1050,9 @@ describe('things/', function() {
     expect(res.status).toEqual(200);
 
     const actionDescr = {
-      reboot: {},
+      reboot: {
+        input: {},
+      },
     };
 
     res = await chai.request(server)
@@ -793,12 +1094,12 @@ describe('things/', function() {
       },
     };
 
-    const err = await pFinal(chai.request(server)
+    const err = await chai.request(server)
       .post(thingBase + Constants.ACTIONS_PATH)
       .set(...headerAuth(jwt))
       .set('Accept', 'application/json')
-      .send(actionDescr));
-    expect(err.response.status).toEqual(404);
+      .send(actionDescr);
+    expect(err.status).toEqual(404);
   });
 
   it('fails to create thing action which does not exist', async () => {
@@ -820,12 +1121,12 @@ describe('things/', function() {
       },
     };
 
-    const err = await pFinal(chai.request(server)
+    const err = await chai.request(server)
       .post(thingBase + Constants.ACTIONS_PATH)
       .set(...headerAuth(jwt))
       .set('Accept', 'application/json')
-      .send(actionDescr));
-    expect(err.response.status).toEqual(400);
+      .send(actionDescr);
+    expect(err.status).toEqual(400);
   });
 
   it('should create an action over websocket', async () => {
@@ -837,13 +1138,15 @@ describe('things/', function() {
       webSocketSend(ws, {
         messageType: Constants.REQUEST_ACTION,
         data: {
-          reboot: {},
+          reboot: {
+            input: {},
+          },
         },
       }),
-      webSocketRead(ws, 1),
+      webSocketRead(ws, 2),
     ]);
 
-    const actionStatus = messages[0];
+    const actionStatus = messages[1];
     expect(actionStatus.messageType).toEqual(Constants.ACTION_STATUS);
     expect(actionStatus.data).toHaveProperty('reboot');
 
@@ -877,14 +1180,14 @@ describe('things/', function() {
           },
         },
       }),
-      webSocketRead(ws, 2),
+      webSocketRead(ws, 3),
     ]);
 
-    const created = messages[0];
+    const created = messages[1];
     expect(created.messageType).toEqual(Constants.ACTION_STATUS);
     expect(created.data.pair.status).toEqual('created');
 
-    const err = messages[1];
+    const err = messages[2];
     expect(err.messageType).toEqual(Constants.ERROR);
 
     await webSocketClose(ws);
@@ -900,12 +1203,210 @@ describe('things/', function() {
         messageType: 'tomato',
         data: {},
       }),
-      webSocketRead(ws, 1),
+      webSocketRead(ws, 2),
     ]);
 
-    const actionStatus = messages[0];
+    const actionStatus = messages[1];
     expect(actionStatus.messageType).toEqual(Constants.ERROR);
 
     await webSocketClose(ws);
+  });
+
+  it('fail to set PIN for device', async () => {
+    await addDevice(piDescr);
+
+    const err = await chai.request(server)
+      .patch(Constants.THINGS_PATH)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({thingId: piDescr.id, pin: '0000'});
+
+    expect(err.status).toEqual(400);
+  });
+
+  it('set PIN for device', async () => {
+    await addDevice(piDescr);
+
+    const res = await chai.request(server)
+      .patch(Constants.THINGS_PATH)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({thingId: piDescr.id, pin: '1234'});
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('title');
+    expect(res.body.title).toEqual(piDescr.title);
+  });
+
+  it('fail to set credentials for device', async () => {
+    await addDevice(piDescr);
+
+    const err = await chai.request(server)
+      .patch(Constants.THINGS_PATH)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({thingId: piDescr.id, username: 'fake', password: 'wrong'});
+
+    expect(err.status).toEqual(400);
+  });
+
+  it('set credentials for device', async () => {
+    await addDevice(piDescr);
+
+    const res = await chai.request(server)
+      .patch(Constants.THINGS_PATH)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({thingId: piDescr.id,
+             username: 'test-user',
+             password: 'Password-1234!'});
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('title');
+    expect(res.body.title).toEqual(piDescr.title);
+  });
+
+  it('fail to set read-only property', async () => {
+    await addDevice(VALIDATION_THING);
+
+    let res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/readOnlyProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('readOnlyProp');
+    expect(res.body.readOnlyProp).toEqual(true);
+
+    const err = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/validation-1/properties/readOnlyProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({readOnlyProp: false});
+    expect(err.status).toEqual(400);
+
+    res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/readOnlyProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('readOnlyProp');
+    expect(res.body.readOnlyProp).toEqual(true);
+  });
+
+  it('fail to set invalid number property value', async () => {
+    await addDevice(VALIDATION_THING);
+
+    let res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/minMaxProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('minMaxProp');
+    expect(res.body.minMaxProp).toEqual(15);
+
+    let err = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/validation-1/properties/minMaxProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({minMaxProp: 0});
+    expect(err.status).toEqual(400);
+
+    res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/minMaxProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('minMaxProp');
+    expect(res.body.minMaxProp).toEqual(15);
+
+    err = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/validation-1/properties/minMaxProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({minMaxProp: 30});
+    expect(err.status).toEqual(400);
+
+    res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/minMaxProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('minMaxProp');
+    expect(res.body.minMaxProp).toEqual(15);
+
+    res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/multipleProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('multipleProp');
+    expect(res.body.multipleProp).toEqual(10);
+
+    err = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/validation-1/properties/multipleProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({multipleProp: 3});
+    expect(err.status).toEqual(400);
+
+    res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/multipleProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('multipleProp');
+    expect(res.body.multipleProp).toEqual(10);
+
+    res = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/validation-1/properties/multipleProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({multipleProp: 30});
+    expect(res.status).toEqual(200);
+
+    res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/multipleProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('multipleProp');
+    expect(res.body.multipleProp).toEqual(30);
+  });
+
+  it('fail to set invalid enum property value', async () => {
+    await addDevice(VALIDATION_THING);
+
+    let res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/enumProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('enumProp');
+    expect(res.body.enumProp).toEqual('val2');
+
+    const err = await chai.request(server)
+      .put(`${Constants.THINGS_PATH}/validation-1/properties/enumProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt))
+      .send({enumProp: 'val0'});
+    expect(err.status).toEqual(400);
+
+    res = await chai.request(server)
+      .get(`${Constants.THINGS_PATH}/validation-1/properties/enumProp`)
+      .set('Accept', 'application/json')
+      .set(...headerAuth(jwt));
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toHaveProperty('enumProp');
+    expect(res.body.enumProp).toEqual('val2');
   });
 });

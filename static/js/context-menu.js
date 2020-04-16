@@ -10,7 +10,11 @@
 'use strict';
 
 const API = require('./api');
-const page = require('./lib/page');
+const App = require('./app');
+const Icons = require('./icons');
+const page = require('page');
+const Utils = require('./utils');
+const fluent = require('./fluent');
 
 // eslint-disable-next-line no-unused-vars
 const ContextMenu = {
@@ -20,14 +24,31 @@ const ContextMenu = {
    */
   init: function() {
     this.element = document.getElementById('context-menu');
+    this.editContent = document.getElementById('context-menu-content-edit');
+    this.removeContent = document.getElementById('context-menu-content-remove');
     this.backButton = document.getElementById('context-menu-back-button');
-    this.heading = document.getElementById('context-menu-heading');
+    this.headingIcon = document.getElementById('context-menu-heading-icon');
+    this.headingCustomIcon =
+      document.getElementById('context-menu-heading-custom-icon');
+    this.headingText = document.getElementById('context-menu-heading-text');
+    this.saveButton = document.getElementById('edit-thing-save-button');
+    this.thingIcon = document.getElementById('edit-thing-icon');
+    this.titleInput = document.getElementById('edit-thing-title');
+    this.thingType = document.getElementById('edit-thing-type');
+    this.customIcon = document.getElementById('edit-thing-custom-icon');
+    this.customIconInput =
+      document.getElementById('edit-thing-custom-icon-input');
+    this.customIconLabel =
+      document.getElementById('edit-thing-custom-icon-label');
+    this.label = document.getElementById('edit-thing-label');
     this.removeButton = document.getElementById('remove-thing-button');
     this.logoutForm = document.getElementById('logout');
-    this.thingUrl = '';
+    this.thingId = '';
+
     // Add event listeners
     window.addEventListener('_contextmenu', this.show.bind(this));
     this.backButton.addEventListener('click', this.hide.bind(this));
+    this.saveButton.addEventListener('click', this.handleEdit.bind(this));
     this.removeButton.addEventListener('click', this.handleRemove.bind(this));
     this.logoutForm.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -35,15 +56,84 @@ const ContextMenu = {
         window.location.href = '/login';
       });
     });
+    this.thingType.addEventListener('change', this.handleTypeChange.bind(this));
+    this.customIconInput.addEventListener('change',
+                                          this.handleIconUpload.bind(this));
   },
 
   /**
    * Show Context Menu.
    */
   show: function(e) {
-    this.heading.textContent = e.detail.thingName;
-    this.thingUrl = e.detail.thingUrl;
+    this.iconData = null;
+    this.customIcon.iconHref = '';
+
+    if (e.detail.iconHref) {
+      this.headingCustomIcon.classList.remove('hidden');
+      this.headingCustomIcon.iconHref = e.detail.iconHref;
+      this.headingIcon.classList.add('custom-thing');
+      this.headingIcon.style.backgroundImage = '';
+      this.customIcon.iconHref = e.detail.iconHref;
+    } else {
+      this.headingCustomIcon.classList.add('hidden');
+      this.headingIcon.classList.remove('custom-thing');
+      this.headingIcon.style.backgroundImage = `url("${e.detail.thingIcon}")`;
+      this.customIcon.iconHref = '';
+    }
+
+    this.headingText.textContent = e.detail.thingTitle;
+    this.thingId = e.detail.thingId;
     this.element.classList.remove('hidden');
+
+    this.editContent.classList.add('hidden');
+    this.removeContent.classList.add('hidden');
+
+    switch (e.detail.action) {
+      case 'edit': {
+        this.thingType.disabled = false;
+        this.titleInput.disabled = false;
+        this.saveButton.disabled = false;
+        this.customIconInput.disabled = false;
+        this.titleInput.value = e.detail.thingTitle;
+        this.thingType.innerHTML = '';
+
+        if (!e.detail.selectedCapability ||
+            e.detail.selectedCapability === 'Custom') {
+          this.thingIcon.classList.add('custom-thing');
+          this.thingIcon.style.backgroundImage = '';
+          this.customIconLabel.classList.remove('hidden');
+          this.customIcon.classList.remove('hidden');
+        } else {
+          this.thingIcon.classList.remove('custom-thing');
+          this.thingIcon.style.backgroundImage = `url("${e.detail.thingIcon}")`;
+          this.customIconLabel.classList.add('hidden');
+          this.customIcon.classList.add('hidden');
+        }
+
+        const capabilities = Utils.sortCapabilities(e.detail.capabilities);
+        capabilities.push('Custom');
+
+        for (const capability of capabilities) {
+          const option = document.createElement('option');
+          option.value = capability;
+
+          if (e.detail.selectedCapability === capability ||
+              (capability === 'Custom' && !e.detail.selectedCapability)) {
+            option.selected = true;
+          }
+
+          option.innerText = fluent.getMessageStrict(capability) || capability;
+
+          this.thingType.appendChild(option);
+        }
+
+        this.editContent.classList.remove('hidden');
+        break;
+      }
+      case 'remove':
+        this.removeContent.classList.remove('hidden');
+        break;
+    }
   },
 
   /**
@@ -51,33 +141,126 @@ const ContextMenu = {
    */
   hide: function() {
     this.element.classList.add('hidden');
-    this.heading.textContent = '';
-    this.thingUrl = '';
+    this.headingIcon.classList.remove('hidden');
+    this.headingCustomIcon.classList.add('hidden');
+    this.headingText.textContent = '';
+    this.thingId = '';
+  },
+
+  handleTypeChange: function() {
+    const capability =
+      this.thingType.options[this.thingType.selectedIndex].value;
+
+    this.customIconLabel.classList.add('hidden');
+    this.customIcon.classList.add('hidden');
+
+    let image = '';
+    if (capability === 'Custom') {
+      this.customIconLabel.classList.remove('hidden');
+      this.customIcon.classList.remove('hidden');
+    } else if (Icons.capabilityHasIcon(capability)) {
+      image = Icons.capabilityToIcon(capability);
+    }
+
+    if (image) {
+      this.thingIcon.classList.remove('custom-thing');
+      this.thingIcon.style.backgroundImage = `url("${image}")`;
+    } else {
+      this.thingIcon.classList.add('custom-thing');
+      this.thingIcon.style.backgroundImage = '';
+    }
+  },
+
+  handleIconUpload: function() {
+    this.label.classList.add('hidden');
+
+    if (this.customIconInput.files.length === 0) {
+      return;
+    }
+
+    const file = this.customIconInput.files[0];
+    if (!['image/jpeg', 'image/png', 'image/svg+xml'].includes(file.type)) {
+      this.label.innerText = fluent.getMessage('invalid-file');
+      this.label.classList.add('error');
+      this.label.classList.remove('hidden');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = (e) => {
+      if (e.target.error) {
+        console.error(e.target.error);
+        this.label.innerText = fluent.getMessage('failed-read-file');
+        this.label.classList.add('error');
+        this.label.classList.remove('hidden');
+        this.saveButton.disabled = false;
+        return;
+      }
+
+      this.iconData = {
+        mime: file.type,
+        data: btoa(e.target.result),
+      };
+      this.saveButton.disabled = false;
+
+      this.customIcon.iconHref = URL.createObjectURL(file);
+      this.customIcon.classList.remove('hidden');
+    };
+
+    this.saveButton.disabled = true;
+    reader.readAsBinaryString(file);
+  },
+
+  /**
+   * Handle click on edit option.
+   */
+  handleEdit: function() {
+    this.thingType.disabled = true;
+    this.titleInput.disabled = true;
+    this.saveButton.disabled = true;
+    this.customIconInput.disabled = true;
+
+    const title = this.titleInput.value.trim();
+    if (title.length === 0) {
+      return;
+    }
+
+    let capability;
+    if (this.thingType.options.length > 0) {
+      capability = this.thingType.options[this.thingType.selectedIndex].value;
+    }
+
+    const body = {title, selectedCapability: capability};
+
+    if (capability === 'Custom' && this.iconData) {
+      body.iconData = this.iconData;
+    }
+    App.gatewayModel.updateThing(this.thingId, body).then(() => {
+      this.hide();
+      this.saveButton.disabled = false;
+    }).catch((error) => {
+      console.error(`Error updating thing: ${error}`);
+      this.label.innerText = fluent.getMessage('failed-save');
+      this.label.classList.add('error');
+      this.label.classList.remove('hidden');
+      this.thingType.disabled = false;
+      this.titleInput.disabled = false;
+      this.saveButton.disabled = false;
+      this.customIconInput.disabled = false;
+    });
   },
 
   /**
    * Handle click on remove option.
    */
   handleRemove: function() {
-    fetch(this.thingUrl, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${API.jwt}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-    }).then((function(response) {
-      if (response.ok) {
-        console.log('Successfully removed Thing.');
-        page('/things');
-      } else {
-        console.error(`Error removing thing ${response.statusText}`);
-      }
+    App.gatewayModel.removeThing(this.thingId).then(() => {
+      page('/things');
       this.hide();
-    }).bind(this)).catch((function(error) {
-      console.error(`Error removing thing ${error}`);
+    }).catch((error) => {
+      console.error(`Error removing thing: ${error}`);
       this.hide();
-    }).bind(this));
+    });
   },
 };
 

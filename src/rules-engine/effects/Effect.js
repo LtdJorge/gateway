@@ -1,8 +1,10 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.*
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+
+'use strict';
 
 /**
  * Effect - The outcome of a Rule once triggered
@@ -10,10 +12,11 @@
 class Effect {
   /**
    * Create an Effect based on a wire-format description with a property
-   * @param {EffectDescription} _desc
+   * @param {EffectDescription} desc
    */
-  constructor(_desc) {
+  constructor(desc) {
     this.type = this.constructor.name;
+    this.label = desc.label;
   }
 
   /**
@@ -22,6 +25,7 @@ class Effect {
   toDescription() {
     return {
       type: this.type,
+      label: this.label,
     };
   }
 

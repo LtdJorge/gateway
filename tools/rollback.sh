@@ -6,6 +6,9 @@
 
 COUNTER_FILE=/tmp/mozilla-iot-gateway-reset-counter
 
+export NVM_DIR=${HOME}/.nvm
+\. "$NVM_DIR/nvm.sh"  # This loads nvm
+
 # from https://stackoverflow.com/questions/552724/
 function recentEnough() {
   local filename=$1
@@ -49,14 +52,27 @@ function checkCounter() {
 
 if [ -d "gateway_old" ] && $(recentEnough "gateway_old") && $(checkCounter); then
   systemctl stop mozilla-iot-gateway
-  # TODO: remove when gateway_old is not 0.3.1
-  if [ -f "gateway/.post_upgrade_complete" ]; then
-    # NB: using the nvm command-line tool fails because we are root
-    echo "v7.10.1" > /home/pi/.nvm/alias/default
-    rm gateway/.post_upgrade_complete
-  fi
-  rm -fr gateway_failed
+  rm -rf gateway_failed
   mv gateway gateway_failed
   mv gateway_old gateway
+
+  # restore the user profile
+  if [ -d "$HOME/.mozilla-iot.old" ]; then
+    rm -rf "$HOME/.mozilla-iot.failed"
+    mv "$HOME/.mozilla-iot" "$HOME/.mozilla-iot.failed"
+    mv "$HOME/.mozilla-iot.old" "$HOME/.mozilla-iot"
+  fi
+
+  # Install and use the version of node specified in .nvmrc
+  pushd ./gateway
+  nvm install
+  nvm use
+  nvm alias default node
+  popd
+
+  cd "$HOME/mozilla-iot/gateway/node_modules/gateway-addon"
+  npm link || true
+  cd -
+
   systemctl start mozilla-iot-gateway
 fi

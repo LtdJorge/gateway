@@ -32,14 +32,14 @@ OAuthClientsController.get('/', async (request: express.Request, response: expre
 
 OAuthClientsController.delete('/:clientId', async (request: express.Request, response: express.Response) => {
   let clientId = request.params.clientId;
-  if (!OAuthClients.get(clientId)) {
+  if (!OAuthClients.get(clientId, undefined)) {
     response.status(404).send('Client not found');
     return;
   }
   let user = (request as any).jwt.user;
 
   await OAuthClients.revokeClientAuthorization(user, clientId);
-  response.sendStatus(200);
+  response.sendStatus(204);
 });
 
 export default OAuthClientsController;

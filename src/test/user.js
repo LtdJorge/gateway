@@ -4,6 +4,7 @@
 
 const Constants = require('../constants');
 const chai = require('./chai');
+const speakeasy = require('speakeasy');
 
 const TEST_USER = {
   email: 'test@example.com',
@@ -31,11 +32,13 @@ const TEST_USER_UPDATE_2 = {
 };
 
 async function getJWT(path, server, user) {
-  const res = await chai.request(server).
-    post(path).
-    set('Accept', 'application/json').
-    send(user);
-  expect(res.status).toEqual(200);
+  const res = await chai.request(server).keepOpen()
+    .post(path)
+    .set('Accept', 'application/json')
+    .send(user);
+  if (res.status !== 200) {
+    throw res;
+  }
   expect(typeof res.body.jwt).toBe('string');
   return res.body.jwt;
 }
@@ -49,42 +52,92 @@ async function createUser(server, user) {
 }
 
 async function addUser(server, jwt, user) {
-  const res = await chai.request(server).
-    post(Constants.USERS_PATH).
-    set(...headerAuth(jwt)).
-    set('Accept', 'application/json').
-    send(user);
-  expect(res.status).toEqual(200);
+  const res = await chai.request(server).keepOpen()
+    .post(Constants.USERS_PATH)
+    .set(...headerAuth(jwt))
+    .set('Accept', 'application/json')
+    .send(user);
+  if (res.status !== 200) {
+    throw res;
+  }
   return res;
 }
 
 async function editUser(server, jwt, user) {
-  const res = await chai.request(server).
-    put(`${Constants.USERS_PATH}/${user.id}`).
-    set(...headerAuth(jwt)).
-    set('Accept', 'application/json').
-    send(user);
-  expect(res.status).toEqual(200);
+  const res = await chai.request(server).keepOpen()
+    .put(`${Constants.USERS_PATH}/${user.id}`)
+    .set(...headerAuth(jwt))
+    .set('Accept', 'application/json')
+    .send(user);
+  if (res.status !== 200) {
+    throw res;
+  }
+  return res;
+}
+
+async function enableMfa(server, jwt, user, totp) {
+  const res1 = await chai.request(server).keepOpen()
+    .post(`${Constants.USERS_PATH}/${user.id}/mfa`)
+    .set(...headerAuth(jwt))
+    .set('Accept', 'application/json')
+    .send({enable: true});
+  if (res1.status !== 200) {
+    throw res1;
+  }
+
+  if (!totp) {
+    totp = speakeasy.totp({
+      secret: res1.body.secret,
+      encoding: 'base32',
+    });
+  }
+
+  const res2 = await chai.request(server).keepOpen()
+    .post(`${Constants.USERS_PATH}/${user.id}/mfa`)
+    .set(...headerAuth(jwt))
+    .set('Accept', 'application/json')
+    .send({enable: true, mfa: {totp}});
+  if (res2.status !== 200) {
+    throw res2;
+  }
+
+  // return the combined parameters
+  return Object.assign({}, res1.body, res2.body);
+}
+
+async function disableMfa(server, jwt, user) {
+  const res = await chai.request(server).keepOpen()
+    .post(`${Constants.USERS_PATH}/${user.id}/mfa`)
+    .set(...headerAuth(jwt))
+    .set('Accept', 'application/json')
+    .send({enable: false});
+  if (res.status !== 204) {
+    throw res;
+  }
   return res;
 }
 
 async function deleteUser(server, jwt, userId) {
-  const res = await chai.request(server).
-    delete(`${Constants.USERS_PATH}/${userId}`).
-    set(...headerAuth(jwt)).
-    set('Accept', 'application/json').
-    send();
-  expect(res.status).toEqual(200);
+  const res = await chai.request(server).keepOpen()
+    .delete(`${Constants.USERS_PATH}/${userId}`)
+    .set(...headerAuth(jwt))
+    .set('Accept', 'application/json')
+    .send();
+  if (res.status !== 204) {
+    throw res;
+  }
   return res;
 }
 
 async function userInfo(server, jwt) {
-  const res = await chai.request(server).
-    get(`${Constants.USERS_PATH}/info`).
-    set(...headerAuth(jwt)).
-    set('Accept', 'application/json').
-    send();
-  expect(res.status).toEqual(200);
+  const res = await chai.request(server).keepOpen()
+    .get(`${Constants.USERS_PATH}/info`)
+    .set(...headerAuth(jwt))
+    .set('Accept', 'application/json')
+    .send();
+  if (res.status !== 200) {
+    throw res;
+  }
   expect(Array.isArray(res.body)).toBe(true);
   for (const user of res.body) {
     if (user.loggedIn) {
@@ -96,33 +149,39 @@ async function userInfo(server, jwt) {
 }
 
 async function userInfoById(server, jwt, userId) {
-  const res = await chai.request(server).
-    get(`${Constants.USERS_PATH}/${userId}`).
-    set(...headerAuth(jwt)).
-    set('Accept', 'application/json').
-    send();
-  expect(res.status).toEqual(200);
+  const res = await chai.request(server).keepOpen()
+    .get(`${Constants.USERS_PATH}/${userId}`)
+    .set(...headerAuth(jwt))
+    .set('Accept', 'application/json')
+    .send();
+  if (res.status !== 200) {
+    throw res;
+  }
   expect(typeof res.body).toBe('object');
   return res.body;
 }
 
 async function userCount(server) {
-  const res = await chai.request(server).
-    get(`${Constants.USERS_PATH}/count`).
-    set('Accept', 'application/json').
-    send();
-  expect(res.status).toEqual(200);
+  const res = await chai.request(server).keepOpen()
+    .get(`${Constants.USERS_PATH}/count`)
+    .set('Accept', 'application/json')
+    .send();
+  if (res.status !== 200) {
+    throw res;
+  }
   expect(typeof res.body).toBe('object');
   return res.body;
 }
 
 async function logoutUser(server, jwt) {
-  const res = await chai.request(server).
-    post(Constants.LOG_OUT_PATH).
-    set(...headerAuth(jwt)).
-    set('Accept', 'application/json').
-    send();
-  expect(res.status).toEqual(200);
+  const res = await chai.request(server).keepOpen()
+    .post(Constants.LOG_OUT_PATH)
+    .set(...headerAuth(jwt))
+    .set('Accept', 'application/json')
+    .send();
+  if (res.status !== 200) {
+    throw res;
+  }
   return res;
 }
 
@@ -138,6 +197,8 @@ module.exports = {
   createUser,
   addUser,
   editUser,
+  enableMfa,
+  disableMfa,
   deleteUser,
   loginUser,
   userInfo,

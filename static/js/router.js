@@ -8,14 +8,16 @@
 'use strict';
 
 const App = require('./app');
-const page = require('./lib/page');
+const page = require('page');
 
 // eslint-disable-next-line no-unused-vars
 const Router = {
-  init: function() {
+  init: () => {
     page('/', '/things');
     page('/things', App.showThings.bind(App));
     page('/things/:thingId', App.showThings.bind(App));
+    page('/things/:thingId/actions/:actionName', App.showThings.bind(App));
+    page('/things/:thingId/events', App.showThings.bind(App));
     page('/settings', App.showSettings.bind(App));
     page('/settings/:section', App.showSettings.bind(App));
     page('/settings/:section/:subsection', App.showSettings.bind(App));
@@ -23,6 +25,10 @@ const Router = {
     page('/floorplan', App.showFloorplan.bind(App));
     page('/rules', App.showRules.bind(App));
     page('/rules/:rule', App.showRule.bind(App));
+    page('/logs', App.showLogs.bind(App));
+    page('/logs/things/:thingId/properties', App.showLogs.bind(App));
+    page('/logs/things/:thingId/properties/:propId', App.showLogs.bind(App));
+    page('/extensions/:extensionId', App.showExtension.bind(App));
     page();
   },
 };
